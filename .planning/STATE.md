@@ -2,12 +2,12 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: context_gathered
-last_updated: "2026-05-06T11:00:00.000Z"
+status: executing
+last_updated: "2026-05-07T03:55:00.000Z"
 progress:
   total_phases: 4
   completed_phases: 0
-  total_plans: 0
+  total_plans: 6
   completed_plans: 0
 ---
 
@@ -15,26 +15,26 @@ progress:
 
 **Initialized:** 2026-05-06
 **Mode:** YOLO, sequential, standard granularity
-**Last updated:** 2026-05-06 (roadmap created)
+**Last updated:** 2026-05-07 (Phase 1 executing, Plans 01-02 complete)
 
 ## Project Reference
 
 **Core value:** Reliable, low-latency streaming and control of many physical Android devices, exposed as a clean API that `pelni_server` can embed without needing to understand ADB or scrcpy internals.
 
-**Current focus:** Phase 1 — Single-Device Streaming Foundation. Establish the ADB foundation (`internal/adb/` + in-house `reverse:forward` helper), pin scrcpy `server.jar`, and prove end-to-end video relay for one device, one viewer.
+**Current focus:** Phase 1 — Single-Device Streaming Foundation. 6 plans across 5 waves. Research complete, plans verified, ready to execute.
 
 ## Current Position
 
 | Field | Value |
 |-------|-------|
 | Phase | 1 — Single-Device Streaming Foundation |
-| Plan | (none — phase not yet planned) |
-| Status | not_started |
-| Phase progress | 0/0 plans complete |
+| Plan | 6 plans (01-01 through 01-06) |
+| Status | executing |
+| Phase progress | 2/6 plans complete |
 | Overall progress | 0/4 phases complete |
 
 ```
-[░░░░░░░░░░] 0%   Phase 1
+[██░░░░░░░░] 33%   Phase 1 (executing)
 [░░░░░░░░░░] 0%   Phase 2
 [░░░░░░░░░░] 0%   Phase 3
 [░░░░░░░░░░] 0%   Phase 4
@@ -45,7 +45,7 @@ progress:
 | Metric | Value |
 |--------|-------|
 | Phases completed | 0 |
-| Plans completed | 0 |
+| Plans completed | 2 (01-01, 01-02) |
 | Requirements shipped | 0 / 68 |
 | Validated requirements | 0 |
 | Decisions logged | 8 (in PROJECT.md Key Decisions, all `— Pending`) |
@@ -55,19 +55,29 @@ progress:
 ### Active Decisions Carried Into Planning
 
 1. **Vendor + pin one scrcpy `server.jar` version**, embedded via `//go:embed`. Treat as a vendored protocol, not a library — no auto-update.
-2. **In-house `reverse:forward` helper (~150 LOC)** against AOSP `SERVICES.TXT` — no Go ADB library implements it, and scrcpy cannot start without it.
-3. **`prife/goadb` v0.4.4** as the ADB base; **`coder/websocket` v1.8.14** for WS; **`go-chi/chi/v5`** for routing; **`koanf/v2`** for config; **`log/slog`** for logging; **`go-redis/v9`** at Phase 4 only; **Prometheus** for metrics.
+2. **In-house `reverse:forward` helper (~200-260 LOC)** against AOSP `SERVICES.TXT` — no Go ADB library implements it, and scrcpy cannot start without it.
+3. **`prife/goadb` v0.4.8** as the ADB base; **`coder/websocket` v1.8.14** for WS; **`go-chi/chi/v5`** for routing; **`koanf/v2`** for config; **`log/slog`** for logging; **`go-redis/v9`** at Phase 4 only; **Prometheus** for metrics.
 4. **Per-device mutex, never global**; every ADB call bounded by context with timeout; per-device `errgroup`-supervised goroutine tree.
 5. **Drop-on-slow fan-out** with bounded per-client buffers (4–8 frames); cached config + keyframe for late joiners.
 6. **API-key auth from day one** with constant-time compare and primary/secondary key rotation; bind to `127.0.0.1` or private interface.
 7. **Apache-2.0 attribution** for embedded `server.jar`: ship `THIRD_PARTY_NOTICES`, expose via `--licenses` / endpoint, record pinned version + commit SHA in `--version`.
 8. **Coordination is opt-in** — single-instance deployments compile and run without Redis; `internal/coord/` only wired in Phase 4.
 
-### Open Questions for Plan-Phase
+### Key Research Findings (Phase 1)
 
-- **Phase 1:** Exact LOC for `reverse:forward` helper (refine via spike). Validate `prife/goadb` shell-v2 against real Android 14/15. Confirm pinned scrcpy `server.jar` version (most likely v3.x latest stable at planning time) and capture fixture bytes for codec-reader unit tests.
-- **Phase 2:** "Force keyframe" strategy — accept "wait for natural keyframe" or invest in server.jar tweak. Validate late-joiner cache against a real WebCodecs decoder. Confirm proxy stack `pelni_server` will use (NGINX/HAProxy/Cloudflare).
-- **Phase 4:** Verify LB supports URL-path or query-param hashing (HAProxy `balance hdr`/`url_param`, NGINX `hash`); fallback plan is in-process WS proxy.
+- **Critical correction:** scrcpy uses `localabstract:scrcpy_<SCID>` for device-side reverse tunnels, NOT `tcp:27183`. Semicolon separator in `reverse:forward` command.
+- **Reverse-forward helper is ~200-260 LOC** (refined from ~150 estimate). Connection preservation model (keep :5037 connection open for mapping to persist).
+- **Go 1.24+ required** — current system has 1.22.4, must upgrade before execution.
+- **All 29 Phase 1 requirements covered** across 6 plans in 5 waves.
+- **All 11 CONTEXT.md decisions honored** in plans.
+
+### Open Questions for Execution
+
+- **Phase 1:** Test prife/goadb shell:v2 against real Android 14+ device during execution
+- **Phase 1:** Download scrcpy v3.3.4 server.jar and verify SHA-256 (first Plan 04 task)
+- **Phase 2:** "Force keyframe" strategy — accept "wait for natural keyframe" or invest in server.jar tweak
+- **Phase 2:** Validate late-joiner cache against a real WebCodecs decoder
+- **Phase 4:** Verify LB supports URL-path or query-param hashing; fallback to in-process WS proxy
 
 ### Todos / Followups
 
@@ -79,9 +89,9 @@ progress:
 
 ## Session Continuity
 
-**Last action:** Phase 1 context gathered (4 decisions: scrcpy v3.3.4, strict sequential startup, domain error codes, marker-based reconciliation).
+**Last action:** Phase 1 planned (6 plans, 5 waves). Verification passed with 0 blockers.
 
-**Next action:** `/gsd-plan-phase 1` — orchestrator should trigger `/gsd-research-phase` first per Phase 1's `Research flag: yes` (spike `reverse:forward` helper, validate `prife/goadb` shell-v2 on real device, confirm v3.3.4 fixture bytes for codec readers).
+**Next action:** Continue executing Phase 1 — Plans 01-03 through 01-06 remaining.
 
 **Files of record:**
 
@@ -89,9 +99,13 @@ progress:
 - `.planning/REQUIREMENTS.md` — 68 v1 requirements with traceability table
 - `.planning/ROADMAP.md` — 4 phases, success criteria, dependencies
 - `.planning/phases/01-single-device-streaming-foundation/01-CONTEXT.md` — Phase 1 implementation decisions
+- `.planning/phases/01-single-device-streaming-foundation/01-RESEARCH.md` — Phase 1 technical research (HIGH confidence)
+- `.planning/phases/01-single-device-streaming-foundation/01-PATTERNS.md` — Phase 1 pattern mapping
+- `.planning/phases/01-single-device-streaming-foundation/01-VALIDATION.md` — Phase 1 validation strategy
+- `.planning/phases/01-single-device-streaming-foundation/01-01-PLAN.md` through `01-06-PLAN.md` — 6 execution plans
 - `.planning/research/SUMMARY.md` — research synthesis (HIGH confidence)
 - `.planning/research/{STACK,FEATURES,ARCHITECTURE,PITFALLS}.md` — domain research artifacts
 - `android-monitoring-architecture.md` — original architecture sketch (still consistent with researched plan)
 
 ---
-*State initialized: 2026-05-06 by `/gsd-roadmap`*
+*State updated: 2026-05-07 by plan 01-02 execution*
