@@ -51,9 +51,11 @@ func Load() (*Config, error) {
 		slog.Warn("no config file found, using defaults and env", "path", configPath, "error", err)
 	}
 
-	// 2. Environment provider (prefix ADB_GW_, underscores map to dots)
+	// 2. Environment provider (prefix ADB_GW_)
+	// Transform: ADB_GW_LISTEN_ADDR -> listen_addr (lowercase, strip prefix, keep underscores)
+	// We keep underscores because our koanf struct tags use flat keys with underscores.
 	if err := k.Load(env.Provider("ADB_GW_", ".", func(s string) string {
-		return strings.ReplaceAll(strings.ToLower(strings.TrimPrefix(s, "ADB_GW_")), "_", ".")
+		return strings.ToLower(strings.TrimPrefix(s, "ADB_GW_"))
 	}), nil); err != nil {
 		return nil, fmt.Errorf("load env: %w", err)
 	}
