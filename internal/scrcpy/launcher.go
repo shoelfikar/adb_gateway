@@ -112,6 +112,11 @@ func (l *Launcher) Launch(ctx context.Context, serial string) (*LaunchResult, er
 	// Step 5: Launch app_process via shell:v2
 	// Per D-02: CLASSPATH uses gateway-specific filename scrcpy-server-gateway.jar
 	// Per D-01: version arg is 3.3.4
+	//
+	// app_process runs indefinitely on the device. The ADB shell connection MUST
+	// stay open for the process to survive — closing it sends SIGHUP, killing the
+	// server. RunDaemonCommand keeps the connection open and returns a cleanup
+	// function that closes it (terminating the scrcpy server on the device).
 	appProcessCmd := fmt.Sprintf(
 		"CLASSPATH=%s app_process / com.genymobile.scrcpy.Server %s "+
 			"scid=%s log_level=info "+
@@ -122,22 +127,12 @@ func (l *Launcher) Launch(ctx context.Context, serial string) (*LaunchResult, er
 		ServerJarPath, SCRCPYVersion, result.SCID,
 	)
 	slog.Info("launching scrcpy server", "device", serial, "scid", result.SCID)
-	shellCtx, shellCancel := context.WithTimeout(ctx, 15*time.Second)
-	// RunShellCommand starts the server; it returns quickly but the server
-	// runs in the background on the device. We need to accept the connection
-	// next, so we don't wait for the full shell output.
-	_, err = l.hostServices.RunShellCommand(shellCtx, serial, appProcessCmd)
-	shellCancel()
+	shellCleanup, err := l.hostServices.RunDaemonCommand(ctx, serial, appProcessCmd)
 	if err != nil {
-		// Non-fatal: the scrcpy server process starts in the background and
-		// may not produce output before we need to accept the connection.
-		// Log the error but proceed to accept; if the server truly failed,
-		// Accept will timeout.
-		slog.Warn("shell command returned error (may be expected for background process)",
-			"device", serial, "error", err)
-		// Do NOT clean up here; the server might still be starting.
-		// We'll handle failure at the Accept step.
+		cleanupOnFailure()
+		return nil, fmt.Errorf("launch app_process: %w", err)
 	}
+	cleanupSteps = append(cleanupSteps, shellCleanup)
 
 	// Step 6: Accept video connection with timeout
 	acceptCtx, acceptCancel := context.WithTimeout(ctx, 10*time.Second)
@@ -201,11 +196,14 @@ func (l *Launcher) Launch(ctx context.Context, serial string) (*LaunchResult, er
 		"height", height,
 	)
 
-	// On success, set Cleanup function that closes resources in reverse order
+	// On success, set Cleanup function that closes resources in reverse order.
+	// Closing the shell connection sends SIGHUP to app_process, terminating
+	// the scrcpy server on the device (cleanup=true is set in server args).
 	result.Cleanup = func() {
 		videoConn.Close()
 		reverseMap.Close()
 		videoLn.Close()
+		shellCleanup()
 	}
 
 	return result, nil
