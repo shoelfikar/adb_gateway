@@ -20,6 +20,43 @@ type ReverseMappingSpec struct {
 	HostSpec   string // e.g. "tcp:42001"
 }
 
+// ADBWatchdog probes the ADB server at a configurable interval to detect
+// disconnection. It does not manage reconnection — the caller decides what
+// to do when ADB becomes unreachable.
+type ADBWatchdog struct {
+	client   *Client
+	interval time.Duration
+}
+
+// NewADBWatchdog creates a watchdog that probes the given ADB client.
+// The interval parameter controls how often the watchdog probes; it is not
+// used by ProbeOnce itself (ProbeOnce is a single probe) but is stored for
+// callers that want to reference the configured interval.
+func NewADBWatchdog(client *Client, interval time.Duration) *ADBWatchdog {
+	return &ADBWatchdog{
+		client:   client,
+		interval: interval,
+	}
+}
+
+// ProbeOnce dials the ADB server once and returns nil if reachable, or an
+// error if not. It does not use backoff — it is a single, stateless probe.
+// The caller (typically a ticker loop in main.go) decides what to do on
+// failure: signal a reconnect, log, etc.
+func (w *ADBWatchdog) ProbeOnce(ctx context.Context) error {
+	conn, err := w.client.dial(ctx)
+	if err != nil {
+		return fmt.Errorf("adb watchdog probe: %w", err)
+	}
+	conn.Close()
+	return nil
+}
+
+// Interval returns the configured probe interval.
+func (w *ADBWatchdog) Interval() time.Duration {
+	return w.interval
+}
+
 // Reconnector provides ADB server reconnection with exponential backoff.
 // After adbd restarts, all existing reverse forward mappings are lost (Pitfall 3).
 // The reconnector dials the ADB server repeatedly until it becomes available,

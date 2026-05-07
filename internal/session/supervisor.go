@@ -205,6 +205,31 @@ func (s *DeviceSession) SCID() string {
 	return s.scid
 }
 
+// ReverseMap returns the current reverse mapping for this session.
+// Thread-safe via mutex. Returns nil if no mapping is set.
+func (s *DeviceSession) ReverseMap() *adb.ReverseMapping {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.reverseMap
+}
+
+// SetReverseMap replaces the reverse mapping for this session.
+// Used during ADB reconnect to re-issue reverse forwards.
+// Thread-safe via mutex.
+func (s *DeviceSession) SetReverseMap(rm *adb.ReverseMapping) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.reverseMap = rm
+}
+
+// VideoLn returns the video listener for this session.
+// Thread-safe via mutex. Returns nil if no listener is set.
+func (s *DeviceSession) VideoLn() net.Listener {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.videoLn
+}
+
 // mapLaunchError maps launcher errors to domain error categories.
 // This function lives in the session package to avoid circular imports with
 // the api package. Handlers in the api package use this to determine which

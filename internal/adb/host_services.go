@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"strconv"
 	"time"
@@ -230,4 +231,65 @@ func (h *HostServices) RunShellCommand(ctx context.Context, serial string, cmd s
 		}
 		return string(r.output), nil
 	}
+}
+
+// ReinitializeGoadb creates a new goadb.Adb instance with the same server
+// config, replacing the internal goadb reference. This is needed after ADB
+// server restarts because goadb's internal connection dies when the ADB
+// server is killed. After calling this, NewDeviceWatcher, ListDevices, etc.
+// use the fresh goadb connection.
+func (h *HostServices) ReinitializeGoadb() error {
+	host, portStr, err := net.SplitHostPort(h.client.Addr())
+	if err != nil {
+		return fmt.Errorf("parse adb address %q: %w", h.client.Addr(), err)
+	}
+	var port int
+	if portStr != "" {
+		port, err = strconv.Atoi(portStr)
+		if err != nil {
+			return fmt.Errorf("parse adb port %q: %w", portStr, err)
+		}
+	}
+
+	adb, err := goadb.NewWithConfig(goadb.ServerConfig{
+		Host: host,
+		Port: port,
+	})
+	if err != nil {
+		return fmt.Errorf("reinitialize goadb: %w", err)
+	}
+
+	h.goadb = adb
+	slog.Info("goadb reinitialized after ADB reconnect",
+		"host", host,
+		"port", port,
+	)
+	return nil
+}
+
+// RunDaemonCommand launches a long-running shell command on the device (like app_process)
+// and returns immediately. The ADB shell connection is kept open for the lifetime of
+// the daemon — closing it sends SIGHUP to the process on the device, which terminates it.
+// The caller MUST call the returned cleanup function when the daemon should be stopped.
+func (h *HostServices) RunDaemonCommand(ctx context.Context, serial string, cmd string) (cleanup func(), err error) {
+	device := h.goadb.Device(goadb.DeviceWithSerial(serial))
+
+	conn, err := device.RunShellCommand(true, cmd)
+	if err != nil {
+		return nil, fmt.Errorf("daemon command: %w", err)
+	}
+
+	// Drain output in the background to prevent the device-side buffer from
+	// filling up and blocking the process. Discard all output.
+	go func() {
+		_, _ = io.Copy(io.Discard, conn)
+	}()
+
+	// Return a cleanup function that closes the shell connection, which
+	// sends SIGHUP to the app_process on the device, causing it to exit.
+	cleanup = func() {
+		conn.Close()
+	}
+
+	return cleanup, nil
 }

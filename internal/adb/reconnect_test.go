@@ -187,3 +187,42 @@ func TestReissueReverseForwardsPartialFailure(t *testing.T) {
 	assert.Error(t, err, "should fail when second forward fails")
 	assert.Nil(t, mappings, "mappings should be nil on failure (first one was closed in cleanup)")
 }
+
+func TestProbeOnce_Success(t *testing.T) {
+	// Probe with a running fake ADB server returns nil.
+	fake, cleanup := adbtest.Start(t)
+	defer cleanup()
+
+	client := NewClient(fake.Addr())
+	watchdog := NewADBWatchdog(client, 2*time.Second)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	err := watchdog.ProbeOnce(ctx)
+	assert.NoError(t, err, "ProbeOnce should succeed when ADB server is reachable")
+}
+
+func TestProbeOnce_Failure(t *testing.T) {
+	// Probe with no server returns error.
+	client := NewClient("127.0.0.1:1") // Port 1 is very unlikely to have a server
+	watchdog := NewADBWatchdog(client, 2*time.Second)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	err := watchdog.ProbeOnce(ctx)
+	assert.Error(t, err, "ProbeOnce should fail when ADB server is unreachable")
+}
+
+func TestProbeOnce_ContextCancelled(t *testing.T) {
+	// Probe with a cancelled context returns error quickly.
+	client := NewClient("127.0.0.1:1")
+	watchdog := NewADBWatchdog(client, 2*time.Second)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // Cancel immediately
+
+	err := watchdog.ProbeOnce(ctx)
+	assert.Error(t, err, "ProbeOnce should fail with cancelled context")
+}
