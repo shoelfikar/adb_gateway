@@ -1,0 +1,5 @@
+listen_addr: "127.0.0.1:8080"
+adb_addr: "localhost:5037"
+log_level: "info"
+# api_key_primary: set via env ADB_GW_API_KEY_PRIMARY
+# api_key_secondary: set via env ADB_GW_API_KEY_SECONDARY
