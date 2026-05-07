@@ -105,6 +105,37 @@ func TestListDevicesWithDevices(t *testing.T) {
 	assert.Equal(t, "active", deviceMap["DEF456"])
 }
 
+func TestListDevicesExcludesFailed(t *testing.T) {
+	registry := session.NewRegistry()
+	entry1 := registry.GetOrCreate("AVAILABLE1")
+	entry1.SetState(session.StateIdle)
+	entry2 := registry.GetOrCreate("AVAILABLE2")
+	entry2.SetState(session.StateActive)
+	entry3 := registry.GetOrCreate("FAILED1")
+	entry3.SetState(session.StateFailed)
+
+	router := setupTestRouter(registry)
+	req := httptest.NewRequest(http.MethodGet, "/devices", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var devices []deviceResponse
+	err := json.Unmarshal(w.Body.Bytes(), &devices)
+	require.NoError(t, err)
+
+	// Only available1 and available2 should appear, not failed1
+	assert.Len(t, devices, 2)
+	serials := make(map[string]bool)
+	for _, d := range devices {
+		serials[d.Serial] = true
+		assert.NotEqual(t, "failed", d.State)
+	}
+	assert.True(t, serials["AVAILABLE1"])
+	assert.True(t, serials["AVAILABLE2"])
+}
+
 func TestCreateSessionInvalidSerial(t *testing.T) {
 	registry := session.NewRegistry()
 	router := setupTestRouter(registry)
@@ -149,7 +180,8 @@ func TestSerialPatternValidation(t *testing.T) {
 		{"alphanumeric", "ABC123", true},
 		{"with dashes", "ABC-123", true},
 		{"with colons", "AA:BB:CC:DD:EE:FF", true},
-		{"with dots", "ABC.123", false},
+		{"with dots", "ABC.123", true},
+		{"wifi adb serial", "adb-R9CXA0460JZ-QBVjw8._adb-tls-connect._tcp", true},
 		{"with spaces", "ABC 123", false},
 		{"with slashes", "ABC/123", false},
 		{"with special chars", "ABC@123", false},
@@ -286,6 +318,71 @@ func TestDeleteSessionIDMismatch(t *testing.T) {
 
 	// Session should still exist
 	assert.NotNil(t, entry.GetSession())
+
+	sess.Close(context.Background())
+	client.Close()
+}
+
+func TestCreateSessionStartingConflict(t *testing.T) {
+	// When a device is in StateStarting (launch in progress),
+	// a second CreateSession request should return 409 Conflict.
+	registry := session.NewRegistry()
+	entry := registry.GetOrCreate("ABC123")
+
+	// Simulate a device in the "starting" state (launch in progress).
+	entry.Lock()
+	entry.State = session.StateStarting
+	entry.Unlock()
+
+	router := setupTestRouter(registry)
+
+	req := httptest.NewRequest(http.MethodPost, "/devices/ABC123/sessions", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	// Should get 409 Conflict because device is in starting state.
+	assert.Equal(t, http.StatusConflict, w.Code)
+
+	var errResp errorResponse
+	err := json.Unmarshal(w.Body.Bytes(), &errResp)
+	require.NoError(t, err)
+	assert.Equal(t, "SESSION_CONFLICT", errResp.Error.Code)
+}
+
+func TestCreateSessionActiveConflict(t *testing.T) {
+	// When a device already has an active session, CreateSession should
+	// return the existing session (200 OK, not 409 Conflict).
+	registry := session.NewRegistry()
+	entry := registry.GetOrCreate("ABC123")
+
+	result := createTestLaunchResult()
+	srv, client := net.Pipe()
+	defer srv.Close()
+	result.VideoConn = client
+
+	launcher := &mockLauncherForAPI{result: result}
+	sess := session.NewDeviceSession("ABC123", nil, launcher)
+	err := sess.Start(context.Background())
+	require.NoError(t, err)
+
+	entry.Lock()
+	entry.Session = sess
+	entry.State = session.StateActive
+	entry.Unlock()
+
+	router := setupTestRouter(registry)
+
+	req := httptest.NewRequest(http.MethodPost, "/devices/ABC123/sessions", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	// Should return 200 OK with existing session (idempotent per DEV-03).
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var resp sessionResponse
+	err = json.Unmarshal(w.Body.Bytes(), &resp)
+	require.NoError(t, err)
+	assert.Equal(t, sess.ID, resp.ID)
 
 	sess.Close(context.Background())
 	client.Close()

@@ -40,6 +40,12 @@ func ListDevices(registry *session.Registry) http.HandlerFunc {
 		devices := make([]deviceResponse, 0, len(entries))
 
 		for _, entry := range entries {
+			// Skip failed devices -- they're not reachable and should
+			// not appear in the device list. Clients can retry by
+			// creating a new session once the device recovers.
+			if entry.GetState() == session.StateFailed {
+				continue
+			}
 			devices = append(devices, deviceResponse{
 				Serial: entry.Serial,
 				State:  entry.GetState().String(),

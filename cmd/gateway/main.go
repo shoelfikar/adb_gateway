@@ -155,8 +155,8 @@ func main() {
 		}
 	}()
 
-	// ADB lifecycle loop: detect disconnect, reconnect, re-issue forwards,
-	// restart device watcher. Runs until context is cancelled (graceful shutdown).
+	// ADB lifecycle loop: detect disconnect, reconnect, restart device watcher.
+	// Runs until context is cancelled (graceful shutdown).
 	for {
 		select {
 		case <-ctx.Done():
@@ -165,12 +165,10 @@ func main() {
 		case <-adbDisconnected:
 			slog.Warn("ADB connection lost, starting reconnection")
 
-			// CAPTURE active session specs BEFORE marking disconnected.
-			// After MarkAllDisconnected, entries are StateFailed so ActiveSessionSpecs would return empty.
-			sessionSpecs := registry.ActiveSessionSpecs()
-
-			// Mark all devices as disconnected: remove idle entries,
-			// transition active sessions to StateFailed.
+			// Release all session resources and clear registry entries.
+			// This closes video listeners, reverse mappings, and device-side
+			// app_process cleanup for every active session. After this call,
+			// the registry is empty and all file descriptors are released.
 			registry.MarkAllDisconnected()
 
 			// Reconnect with exponential backoff
@@ -183,38 +181,16 @@ func main() {
 			// Reinitialize goadb so device watcher and host services work
 			if err := hostServices.ReinitializeGoadb(); err != nil {
 				slog.Error("failed to reinitialize goadb after reconnect", "error", err)
-				// Non-fatal: continue, ListDevices/WatchDevices will retry on next cycle
+				// Non-fatal: continue, ListDevices/WatchDevices will retry
 			}
 
-			// Reconcile: clean up orphan processes and stale forwards
+			// Reconcile: kill orphan processes and remove stale reverse forwards
+			// left by the previous gateway session on the device
 			if err := reconciler.Reconcile(ctx); err != nil {
 				slog.Warn("post-reconnect reconciliation failed", "error", err)
 			}
 
-			// Re-issue reverse forwards for sessions captured before MarkAllDisconnected
-			for serial, specs := range sessionSpecs {
-				newMappings, err := reconnector.ReissueReverseForwards(ctx, serial, specs)
-				if err != nil {
-					slog.Error("failed to re-issue reverse forwards",
-						"device", serial, "error", err)
-					continue
-				}
-				// Find the registry entry and update its session's reverse mapping
-				if entry, ok := registry.Get(serial); ok {
-					sess := entry.GetSession()
-					if sess != nil && len(newMappings) > 0 {
-						oldRM := sess.ReverseMap()
-						sess.SetReverseMap(newMappings[0])
-						if oldRM != nil {
-							oldRM.Close()
-						}
-						slog.Info("re-issued reverse forward",
-							"device", serial, "session", sess.ID)
-					}
-				}
-			}
-
-			// Start new device watcher
+			// Start new device watcher (entries will be re-populated by WatchDevices)
 			newEvents, err := hostServices.NewDeviceWatcher(ctx)
 			if err != nil {
 				slog.Error("failed to restart device watcher after reconnect", "error", err)
