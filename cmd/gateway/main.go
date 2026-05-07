@@ -105,7 +105,24 @@ func main() {
 		slog.Error("failed to start device watcher", "error", err)
 		os.Exit(1)
 	}
-	go registry.WatchDevices(ctx, deviceEvents)
+
+	// Channel signaled when ADB disconnect is detected (by watchdog or device watcher).
+	adbDisconnected := make(chan struct{}, 1)
+
+	// Start device watcher goroutine; signals disconnect if the event channel closes.
+	go func() {
+		if registry.WatchDevices(ctx, deviceEvents) {
+			// Channel closed = ADB disconnect
+			select {
+			case adbDisconnected <- struct{}{}:
+			default:
+			}
+		}
+	}()
+
+	// Start watchdog goroutine to probe ADB server liveness every 2 seconds.
+	watchdog := adb.NewADBWatchdog(adbClient, 2*time.Second)
+	startWatchdog(ctx, watchdog, adbDisconnected)
 
 	router := api.NewRouter(cfg, registry, adbClient, hostServices)
 
@@ -113,7 +130,10 @@ func main() {
 		Addr:         cfg.ListenAddr,
 		Handler:      router,
 		ReadTimeout:  15 * time.Second,
-		WriteTimeout: 15 * time.Second,
+		// WriteTimeout must accommodate session creation, which involves
+		// push (30s), reverse tunnel (10s), accept (10s), and metadata
+		// reads (10s). Total can legitimately reach 60s.
+		WriteTimeout: 65 * time.Second,
 		IdleTimeout:  60 * time.Second,
 	}
 
@@ -135,9 +155,95 @@ func main() {
 		}
 	}()
 
-	// Block until context is cancelled (SIGTERM/SIGINT received or server error).
-	<-ctx.Done()
+	// ADB lifecycle loop: detect disconnect, reconnect, re-issue forwards,
+	// restart device watcher. Runs until context is cancelled (graceful shutdown).
+	for {
+		select {
+		case <-ctx.Done():
+			// Graceful shutdown
+			goto shutdown
+		case <-adbDisconnected:
+			slog.Warn("ADB connection lost, starting reconnection")
 
+			// CAPTURE active session specs BEFORE marking disconnected.
+			// After MarkAllDisconnected, entries are StateFailed so ActiveSessionSpecs would return empty.
+			sessionSpecs := registry.ActiveSessionSpecs()
+
+			// Mark all devices as disconnected: remove idle entries,
+			// transition active sessions to StateFailed.
+			registry.MarkAllDisconnected()
+
+			// Reconnect with exponential backoff
+			if err := reconnector.AwaitADBReady(ctx); err != nil {
+				slog.Error("ADB reconnection cancelled", "error", err)
+				goto shutdown
+			}
+			slog.Info("ADB server reconnected")
+
+			// Reinitialize goadb so device watcher and host services work
+			if err := hostServices.ReinitializeGoadb(); err != nil {
+				slog.Error("failed to reinitialize goadb after reconnect", "error", err)
+				// Non-fatal: continue, ListDevices/WatchDevices will retry on next cycle
+			}
+
+			// Reconcile: clean up orphan processes and stale forwards
+			if err := reconciler.Reconcile(ctx); err != nil {
+				slog.Warn("post-reconnect reconciliation failed", "error", err)
+			}
+
+			// Re-issue reverse forwards for sessions captured before MarkAllDisconnected
+			for serial, specs := range sessionSpecs {
+				newMappings, err := reconnector.ReissueReverseForwards(ctx, serial, specs)
+				if err != nil {
+					slog.Error("failed to re-issue reverse forwards",
+						"device", serial, "error", err)
+					continue
+				}
+				// Find the registry entry and update its session's reverse mapping
+				if entry, ok := registry.Get(serial); ok {
+					sess := entry.GetSession()
+					if sess != nil && len(newMappings) > 0 {
+						oldRM := sess.ReverseMap()
+						sess.SetReverseMap(newMappings[0])
+						if oldRM != nil {
+							oldRM.Close()
+						}
+						slog.Info("re-issued reverse forward",
+							"device", serial, "session", sess.ID)
+					}
+				}
+			}
+
+			// Start new device watcher
+			newEvents, err := hostServices.NewDeviceWatcher(ctx)
+			if err != nil {
+				slog.Error("failed to restart device watcher after reconnect", "error", err)
+				// Trigger another reconnect cycle
+				select {
+				case adbDisconnected <- struct{}{}:
+				default:
+				}
+				continue
+			}
+
+			// Restart WatchDevices goroutine
+			go func() {
+				if registry.WatchDevices(ctx, newEvents) {
+					select {
+					case adbDisconnected <- struct{}{}:
+					default:
+					}
+				}
+			}()
+
+			// Restart watchdog probing
+			startWatchdog(ctx, watchdog, adbDisconnected)
+
+			slog.Info("ADB lifecycle restored, device watcher restarted")
+		}
+	}
+
+shutdown:
 	// Drain all active sessions within 30 seconds per FND-01.
 	drainCtx, drainCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer drainCancel()
@@ -149,6 +255,34 @@ func main() {
 	}
 
 	slog.Info("shutdown complete")
+}
+
+// startWatchdog launches a goroutine that probes ADB every 2 seconds.
+// On probe failure, it signals the adbDisconnected channel and stops.
+// The lifecycle loop will restart the watchdog after reconnecting.
+func startWatchdog(ctx context.Context, watchdog *adb.ADBWatchdog, adbDisconnected chan<- struct{}) {
+	go func() {
+		ticker := time.NewTicker(watchdog.Interval())
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				probeCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+				err := watchdog.ProbeOnce(probeCtx)
+				cancel()
+				if err != nil {
+					slog.Warn("ADB watchdog detected disconnect", "error", err)
+					select {
+					case adbDisconnected <- struct{}{}:
+					default: // already signaled, don't block
+					}
+					return // stop probing; lifecycle loop will restart us
+				}
+			}
+		}
+	}()
 }
 
 // readThirdPartyNotices locates and reads the THIRD_PARTY_NOTICES file.
