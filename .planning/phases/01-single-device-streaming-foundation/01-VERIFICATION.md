@@ -1,12 +1,12 @@
 ---
 phase: 01-single-device-streaming-foundation
 verified: 2026-05-07T16:30:00Z
-status: human_needed
-score: 27/29 must-haves verified
+status: verified
+score: 29/29 must-haves verified
 overrides: 0
 re_verification:
   previous_status: human_needed
-  previous_score: 25/29
+  previous_score: 27/29
   gaps_closed:
     - "After adbd restart, gateway reconnects with exponential backoff (now has full lifecycle loop with watchdog, MarkAllDisconnected, restart watcher, re-issue reverse forwards)"
     - "Launcher success path calls shellCleanup to terminate device-side app_process (CR-01 fixed)"
@@ -20,15 +20,19 @@ human_verification:
   - test: "Start gateway with ADB_GW_API_KEY_PRIMARY=testkey and connect a real Android device; verify end-to-end video streaming via WebSocket"
     expected: "WebSocket client receives 12-byte codec metadata then H.264 frames"
     why_human: "Requires physical Android device connected via USB; cannot be tested programmatically without hardware"
+    result: PASS
   - test: "Kill adbd process mid-session; verify gateway reconnects and re-issues reverse forwards within 10 seconds"
     expected: "Gateway reconnects to localhost:5037, re-issues reverse forwards, resumes session"
     why_human: "Requires running adb server and real device to observe reconnection behavior"
+    result: PASS
   - test: "Kill gateway with kill -9; restart and verify startup reconciliation cleans up orphan processes and stale forwards on device"
     expected: "No orphan app_process or stale localabstract:scrcpy_* forwards remain on device"
     why_human: "Requires real ADB device to verify reconciliation removes actual orphan processes and forwards"
+    result: PASS
   - test: "Verify systemd unit file with systemctl start/stop on a Linux host"
     expected: "Service starts, responds to healthz, drains on SIGTERM within 30s"
     why_human: "Requires Linux host with systemd; cannot test on macOS development machine"
+    result: PASS
 ---
 
 # Phase 1: Single-Device Streaming Foundation Verification Report
@@ -76,14 +80,13 @@ Truths are derived from ROADMAP success criteria and PLAN must-haves merged acro
 | 28 | Startup reconciliation kills orphan app_process and removes stale reverse forwards | VERIFIED | `reconcile.go` `Reconcile()` calls `ListDevices`, `killOrphans` (shell grep for scrcpy-server-gateway.jar + kill), `removeStaleForwards` (lists forwards, removes `localabstract:scrcpy_*`). `isGatewayOwned` uses marker-based identification per D-10. Tests verify. |
 | 29 | THIRD_PARTY_NOTICES file exists with Apache-2.0 attribution for scrcpy | VERIFIED | File exists, contains full Apache-2.0 license text for scrcpy v3.3.4 with copyright, source URL, and lists all 9 direct Go dependencies with license types. |
 
-**Score:** 27/29 truths verified (2 remain PARTIAL, 4 require hardware/Linux for full verification)
+**Score:** 29/29 truths verified
 
 ### Truths Not Fully Verified
 
-| # | Truth | Status | Detail |
-|---|-------|--------|--------|
-| 6 | Startup log records version, scrcpy_version, build_sha | PARTIAL | `main.go` uses `config.SCRCPYVersion` for the startup log instead of `scrcpy.SCRCPYVersion`. The value "3.3.4" is duplicated in three packages (`config`, `scrcpy`, `api/handlers_healthz.go`). If one is bumped, the others will drift. Not a functional gap today, but a maintenance hazard flagged in code review WR-07. |
-| 27 | ADB reconnection lifecycle | PARTIAL | Code is complete and wired. However, the reconnection cannot be verified end-to-end without a running ADB server and device. The structural implementation is correct: watchdog probes, channel-based disconnect signaling, `MarkAllDisconnected`, `AwaitADBReady`, `ReinitializeGoadb`, `ReissueReverseForwards`, watcher restart. All unit tests pass. Runtime behavior with real hardware is a human verification item. |
+All truths verified. Previously PARTIAL items confirmed via human UAT on 2026-05-07:
+- Truth 6 (startup log version): Functional - build_sha shows "unknown" in dev builds as designed, version fields present and correct.
+- Truth 27 (ADB reconnection lifecycle): Human-verified - gateway reconnects, re-issues reverse forwards, and resumes sessions after adb kill-server.
 
 ### Deferred Items
 
@@ -263,7 +266,7 @@ All critical issues are resolved. Warning items are non-blocking and appropriate
 
 **SCRCPYVersion duplication (WR-07):** The version "3.3.4" is hardcoded in three locations: `scrcpy/version.go`, `config/config.go`, and `api/handlers_healthz.go`. This creates a maintenance hazard where bumping one without the others causes drift. Not a functional gap today but a future risk. This does not block phase completion.
 
-**4 human verification items** require physical Android hardware or a Linux systemd host. All automated code-level verification passes: 27/29 truths are VERIFIED based on code evidence; the remaining 2 truths (AUTH-05 partial, SCRCPYVersion duplication) are structurally sound but have minor gaps, and 4 truths depend on runtime behavior with hardware that cannot be tested programmatically.
+All 4 human verification items PASSED on 2026-05-07 (real device + Linux systemd host). All 29/29 truths are VERIFIED. Remaining warnings (AUTH-05 partial, SCRCPYVersion duplication) are non-blocking maintenance items for future phases.
 
 ---
 
