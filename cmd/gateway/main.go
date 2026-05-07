@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -10,7 +9,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/go-chi/chi/v5"
+	"github.com/pelni/adb-gateway/internal/api"
 	"github.com/pelni/adb-gateway/internal/config"
 	"github.com/pelni/adb-gateway/internal/obs"
 )
@@ -30,6 +29,9 @@ func main() {
 
 	obs.InitLogger(cfg.LogLevel)
 
+	// Set build info for healthz and other endpoints
+	api.SetBuildInfo(buildVersion, buildSHA)
+
 	slog.Info("starting adb-gateway",
 		"version", buildVersion,
 		"scrcpy_version", config.SCRCPYVersion,
@@ -42,11 +44,11 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	r := chi.NewRouter()
+	router := api.NewRouter(cfg)
 
 	srv := &http.Server{
 		Addr:         cfg.ListenAddr,
-		Handler:      r,
+		Handler:      router,
 		ReadTimeout:  15 * time.Second,
 		WriteTimeout: 15 * time.Second,
 		IdleTimeout:  60 * time.Second,
@@ -80,24 +82,3 @@ func main() {
 
 	slog.Info("shutdown complete")
 }
-
-// buildVersion returns the version string set at build time.
-func getBuildVersion() string {
-	if buildVersion == "" {
-		return "dev"
-	}
-	return buildVersion
-}
-
-// getBuildSHA returns the build SHA set at build time.
-func getBuildSHA() string {
-	if buildSHA == "" {
-		return "unknown"
-	}
-	return buildSHA
-}
-
-// unused prevents compile errors -- these will be used when router is wired.
-var _ = fmt.Sprintf
-var _ = getBuildVersion
-var _ = getBuildSHA
