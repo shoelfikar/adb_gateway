@@ -9,12 +9,14 @@ require (
 	github.com/knadh/koanf/providers/file v1.2.1
 	github.com/knadh/koanf/providers/posflag v1.0.1
 	github.com/knadh/koanf/v2 v2.3.4
+	github.com/prife/goadb v0.4.8
 	github.com/prometheus/client_golang v1.23.2
 	github.com/spf13/pflag v1.0.6
 	github.com/stretchr/testify v1.11.1
 )
 
 require (
+	github.com/Masterminds/semver v1.5.0 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
