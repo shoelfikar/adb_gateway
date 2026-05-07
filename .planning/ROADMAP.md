@@ -49,7 +49,7 @@ Plans:
 - [ ] 01-01-PLAN.md -- Foundation: project scaffold, config, logging, healthz, auth middleware, domain errors
 - [ ] 01-02-PLAN.md -- ADB transport: client, host services, reverse:forward helper
 - [ ] 01-03-PLAN.md -- Device registry: tracking with track-devices, session FSM definitions
-- [ ] 01-04-PLAN.md -- scrcpy integration: server.jar embed, launcher, video frame reader
+- [x] 01-04-PLAN.md -- scrcpy integration: server.jar embed, launcher, video frame reader
 - [ ] 01-05-PLAN.md -- Session lifecycle: supervisor, REST endpoints, video WebSocket relay
 - [ ] 01-06-PLAN.md -- Hardening: ADB reconnect, startup reconciliation, graceful shutdown, deploy artifacts
 
@@ -142,7 +142,7 @@ Plans:
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Single-Device Streaming Foundation | 3/6 | executing | 01-01, 01-02, 01-03 |
+| 1. Single-Device Streaming Foundation | 4/6 | executing | 01-01, 01-02, 01-03, 01-04 |
 | 2. Multi-Client + Control | 0/0 | not started | -- |
 | 3. Multi-Device Fleet | 0/0 | not started | -- |
 | 4. Horizontal Scaling | 0/0 | not started | -- |
