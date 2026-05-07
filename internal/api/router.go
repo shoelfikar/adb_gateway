@@ -37,7 +37,7 @@ func NewRouter(cfg *config.Config, registry *session.Registry, adbClient *adb.Cl
 			r.Route("/{serial}", func(r chi.Router) {
 				r.Post("/sessions", CreateSession(registry, adbClient, hostServices))
 				r.Delete("/sessions/{sessionID}", DeleteSession(registry))
-				// Video WebSocket route added in Plan 05 Task 2
+				r.Get("/video", StreamVideo(registry))
 			})
 		})
 	})
