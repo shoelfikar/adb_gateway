@@ -1,5 +1,12 @@
+# ADB Gateway Configuration
+# See --help for all options, --version for build info, --licenses for notices.
+
 listen_addr: "127.0.0.1:8080"
 adb_addr: "localhost:5037"
 log_level: "info"
-# api_key_primary: set via env ADB_GW_API_KEY_PRIMARY
-# api_key_secondary: set via env ADB_GW_API_KEY_SECONDARY
+
+# API keys for authentication (required).
+# Primary key must be set via environment variable or config file.
+# Secondary key is optional and enables zero-downtime key rotation.
+# api_key_primary: set via env ADB_GW_API_KEY_PRIMARY (required)
+# api_key_secondary: set via env ADB_GW_API_KEY_SECONDARY (optional, for key rotation)

@@ -1,0 +1,19 @@
+[Unit]
+Description=ADB Gateway - Android device streaming relay
+After=network.target adb.service
+Wants=adb.service
+
+[Service]
+Type=simple
+User=adb-gateway
+Group=adb-gateway
+ExecStart=/usr/local/bin/adb-gateway --config /etc/adb-gateway/config.yaml
+Restart=on-failure
+RestartSec=5
+LimitNOFILE=65536
+TimeoutStopSec=30s
+Environment=ADB_GW_API_KEY_PRIMARY=@API_KEY_FILE@
+EnvironmentFile=/etc/adb-gateway/env
+
+[Install]
+WantedBy=multi-user.target
