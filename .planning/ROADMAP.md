@@ -46,12 +46,12 @@ Four phases stay within the `standard` band and each has a verifiable end-state.
 **Plans**: 6 plans
 
 Plans:
-- [ ] 01-01-PLAN.md -- Foundation: project scaffold, config, logging, healthz, auth middleware, domain errors
-- [ ] 01-02-PLAN.md -- ADB transport: client, host services, reverse:forward helper
-- [ ] 01-03-PLAN.md -- Device registry: tracking with track-devices, session FSM definitions
+- [x] 01-01-PLAN.md -- Foundation: project scaffold, config, logging, healthz, auth middleware, domain errors
+- [x] 01-02-PLAN.md -- ADB transport: client, host services, reverse:forward helper
+- [x] 01-03-PLAN.md -- Device registry: tracking with track-devices, session FSM definitions
 - [x] 01-04-PLAN.md -- scrcpy integration: server.jar embed, launcher, video frame reader
-- [ ] 01-05-PLAN.md -- Session lifecycle: supervisor, REST endpoints, video WebSocket relay
-- [ ] 01-06-PLAN.md -- Hardening: ADB reconnect, startup reconciliation, graceful shutdown, deploy artifacts
+- [x] 01-05-PLAN.md -- Session lifecycle: supervisor, REST endpoints, video WebSocket relay
+- [x] 01-06-PLAN.md -- Hardening: ADB reconnect, startup reconciliation, graceful shutdown, deploy artifacts
 
 **Research flag**: yes -- `/gsd-plan-phase` should run `/gsd-research-phase` first to spike the in-house `reverse:forward` helper against AOSP `SERVICES.TXT` (refine ~150 LOC estimate), validate `prife/goadb` shell-v2 against a real Android 14/15 device, and confirm the pinned scrcpy `server.jar` version + frame-header layout against fixture bytes.
 
@@ -142,7 +142,7 @@ Plans:
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Single-Device Streaming Foundation | 4/6 | executing | 01-01, 01-02, 01-03, 01-04 |
+| 1. Single-Device Streaming Foundation | 6/6 | complete | 01-01, 01-02, 01-03, 01-04, 01-05, 01-06 |
 | 2. Multi-Client + Control | 0/0 | not started | -- |
 | 3. Multi-Device Fleet | 0/0 | not started | -- |
 | 4. Horizontal Scaling | 0/0 | not started | -- |
