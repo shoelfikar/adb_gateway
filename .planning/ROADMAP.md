@@ -21,7 +21,7 @@ Four phases stay within the `standard` band and each has a verifiable end-state.
 
 ## Phases
 
-- [ ] **Phase 1: Single-Device Streaming Foundation** — One device, one viewer, video frames flowing through WebSocket end-to-end. Locks the ADB foundation, scrcpy version contract, and auth scaffolding for all later phases.
+- [x] **Phase 1: Single-Device Streaming Foundation** — One device, one viewer, video frames flowing through WebSocket end-to-end. Locks the ADB foundation, scrcpy version contract, and auth scaffolding for all later phases.
 - [ ] **Phase 2: Multi-Client + Control** — 1 controller + N observers per device, with audio, control input, reservation leases, and baseline metrics.
 - [ ] **Phase 3: Multi-Device Fleet** — 20-30 concurrent devices on one host with health-driven auto-recovery, ADB-shell features (logcat, screenshot, APK, file push/pull, recording), and per-device performance metrics.
 - [ ] **Phase 4: Horizontal Scaling** — N instances behind a load balancer, Redis-backed device registry, cross-node session handoff, recording retention, and production-grade observability.
@@ -52,7 +52,7 @@ Plans:
 - [x] 01-04-PLAN.md -- scrcpy integration: server.jar embed, launcher, video frame reader
 - [x] 01-05-PLAN.md -- Session lifecycle: supervisor, REST endpoints, video WebSocket relay
 - [x] 01-06-PLAN.md -- Hardening: ADB reconnect, startup reconciliation, graceful shutdown, deploy artifacts
-- [ ] 01-07-PLAN.md -- Gap closure: ADB reconnection lifecycle (detect disconnect, reconnect with backoff, restart watcher, re-issue reverse forwards)
+- [x] 01-07-PLAN.md -- Gap closure: ADB reconnection lifecycle (detect disconnect, reconnect with backoff, restart watcher, re-issue reverse forwards)
 
 **Research flag**: yes -- `/gsd-plan-phase` should run `/gsd-research-phase` first to spike the in-house `reverse:forward` helper against AOSP `SERVICES.TXT` (refine ~150 LOC estimate), validate `prife/goadb` shell-v2 against a real Android 14/15 device, and confirm the pinned scrcpy `server.jar` version + frame-header layout against fixture bytes.
 
@@ -143,7 +143,7 @@ Plans:
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Single-Device Streaming Foundation | 6/7 | gap closure | 01-01, 01-02, 01-03, 01-04, 01-05, 01-06 |
+| 1. Single-Device Streaming Foundation | 7/7 | complete | 01-01, 01-02, 01-03, 01-04, 01-05, 01-06, 01-07 |
 | 2. Multi-Client + Control | 0/0 | not started | -- |
 | 3. Multi-Device Fleet | 0/0 | not started | -- |
 | 4. Horizontal Scaling | 0/0 | not started | -- |

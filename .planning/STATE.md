@@ -3,11 +3,11 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-last_updated: "2026-05-07T06:05:00Z"
+last_updated: "2026-05-07T13:55:00Z"
 progress:
   total_phases: 4
   completed_phases: 0
-  total_plans: 6
+  total_plans: 7
   completed_plans: 0
 ---
 
@@ -15,7 +15,7 @@ progress:
 
 **Initialized:** 2026-05-06
 **Mode:** YOLO, sequential, standard granularity
-**Last updated:** 2026-05-07 (Phase 1 executing, Plans 01-04 complete)
+**Last updated:** 2026-05-07 (Phase 1 executing, Plans 01-07 complete)
 
 ## Project Reference
 
@@ -28,13 +28,13 @@ progress:
 | Field | Value |
 |-------|-------|
 | Phase | 1 — Single-Device Streaming Foundation |
-| Plan | 6 plans (01-01 through 01-06) |
+| Plan | 7 plans (01-01 through 01-07) |
 | Status | executing |
-| Phase progress | 6/6 plans complete |
+| Phase progress | 7/7 plans complete |
 | Overall progress | 0/4 phases complete |
 
 ```
-[██████████] 100%  Phase 1 (executing - all plans complete)
+[██████████] 100%  Phase 1 (7/7 plans complete)
 [░░░░░░░░░░] 0%   Phase 2
 [░░░░░░░░░░] 0%   Phase 3
 [░░░░░░░░░░] 0%   Phase 4
@@ -45,7 +45,7 @@ progress:
 | Metric | Value |
 |--------|-------|
 | Phases completed | 0 |
-| Plans completed | 6 (01-01, 01-02, 01-03, 01-04, 01-05, 01-06) |
+| Plans completed | 7 (01-01, 01-02, 01-03, 01-04, 01-05, 01-06, 01-07) |
 | Requirements shipped | 0 / 68 |
 | Validated requirements | 0 |
 | Decisions logged | 8 (in PROJECT.md Key Decisions, all `— Pending`) |
@@ -77,6 +77,10 @@ progress:
 21. **Runtime file reading for --licenses** instead of //go:embed — Go embed cannot reference files in parent directories; THIRD_PARTY_NOTICES is in project root while main.go is in cmd/gateway/.
 22. **Best-effort startup reconciliation** — errors logged but gateway continues starting; partial cleanup is better than refusing to start.
 23. **cenkalti/backoff/v4 for ADB reconnection** — 100ms initial, 5s max, indefinite retry (context cancel is the only exit).
+24. **WatchDevices returns bool** — true signals ADB disconnect (channel close), false signals graceful shutdown (context cancel). Caller distinguishes between the two to decide whether to reconnect.
+25. **MarkAllDisconnected removes idle entries** — StateIdle->StateFailed is not a valid FSM transition, so idle entries are deleted rather than transitioned. Active/starting/stopping entries transition to StateFailed and are kept for reverse forward re-issuance.
+26. **ActiveSessionSpecs captures specs from existing ReverseMapping** — avoids net.Addr format inconsistencies that arise from reconstructing specs from VideoLn.Addr().
+27. **Watchdog is a probe-only type** — ADBWatchdog.ProbeOnce is stateless; the caller (main.go lifecycle goroutine) manages reconnection orchestration and restarts the watchdog goroutine after reconnect.
 
 ### Key Research Findings (Phase 1)
 
@@ -102,7 +106,7 @@ progress:
 
 ## Session Continuity
 
-**Last action:** Plan 01-06 executed — ADB reconnect with backoff, startup reconciliation, graceful shutdown, THIRD_PARTY_NOTICES, systemd unit. Phase 1 complete.
+**Last action:** Plan 01-07 executed — ADB reconnection gap closure (watchdog probes, MarkAllDisconnected, lifecycle loop, reverse forward re-issuance). Phase 1 fully complete (7/7 plans).
 
 **Next action:** Phase transition — review Phase 1 outcomes, prepare Phase 2 (Multi-Client Broadcast).
 
@@ -121,4 +125,4 @@ progress:
 - `android-monitoring-architecture.md` — original architecture sketch (still consistent with researched plan)
 
 ---
-*State updated: 2026-05-07 by plan 01-03 execution*
+*State updated: 2026-05-07 by plan 01-07 execution*
