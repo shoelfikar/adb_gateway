@@ -43,7 +43,7 @@ Four phases stay within the `standard` band and each has a verifiable end-state.
   4. Killing `adbd` mid-session causes the gateway to reconnect to `localhost:5037`, re-issue every `reverse:forward`, audit via `reverse:list-forward`, and resume the session within 10s -- without restarting the gateway process.
   5. Restarting the gateway after `kill -9` leaves no orphan `app_process` on the device and no stale gateway-owned reverse mappings (verified by startup reconciliation pass); `THIRD_PARTY_NOTICES` ships in the deploy artifact and is exposed via `--licenses`.
 
-**Plans**: 6 plans
+\*\*Plans\*\*: 7 plans
 
 Plans:
 - [x] 01-01-PLAN.md -- Foundation: project scaffold, config, logging, healthz, auth middleware, domain errors
@@ -52,6 +52,7 @@ Plans:
 - [x] 01-04-PLAN.md -- scrcpy integration: server.jar embed, launcher, video frame reader
 - [x] 01-05-PLAN.md -- Session lifecycle: supervisor, REST endpoints, video WebSocket relay
 - [x] 01-06-PLAN.md -- Hardening: ADB reconnect, startup reconciliation, graceful shutdown, deploy artifacts
+- [ ] 01-07-PLAN.md -- Gap closure: ADB reconnection lifecycle (detect disconnect, reconnect with backoff, restart watcher, re-issue reverse forwards)
 
 **Research flag**: yes -- `/gsd-plan-phase` should run `/gsd-research-phase` first to spike the in-house `reverse:forward` helper against AOSP `SERVICES.TXT` (refine ~150 LOC estimate), validate `prife/goadb` shell-v2 against a real Android 14/15 device, and confirm the pinned scrcpy `server.jar` version + frame-header layout against fixture bytes.
 
@@ -142,7 +143,7 @@ Plans:
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Single-Device Streaming Foundation | 6/6 | complete | 01-01, 01-02, 01-03, 01-04, 01-05, 01-06 |
+| 1. Single-Device Streaming Foundation | 6/7 | gap closure | 01-01, 01-02, 01-03, 01-04, 01-05, 01-06 |
 | 2. Multi-Client + Control | 0/0 | not started | -- |
 | 3. Multi-Device Fleet | 0/0 | not started | -- |
 | 4. Horizontal Scaling | 0/0 | not started | -- |
