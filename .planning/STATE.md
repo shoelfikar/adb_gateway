@@ -3,7 +3,7 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-last_updated: "2026-05-07T05:40:00Z"
+last_updated: "2026-05-07T06:05:00Z"
 progress:
   total_phases: 4
   completed_phases: 0
@@ -30,11 +30,11 @@ progress:
 | Phase | 1 — Single-Device Streaming Foundation |
 | Plan | 6 plans (01-01 through 01-06) |
 | Status | executing |
-| Phase progress | 5/6 plans complete |
+| Phase progress | 6/6 plans complete |
 | Overall progress | 0/4 phases complete |
 
 ```
-[████████░░] 83%   Phase 1 (executing)
+[██████████] 100%  Phase 1 (executing - all plans complete)
 [░░░░░░░░░░] 0%   Phase 2
 [░░░░░░░░░░] 0%   Phase 3
 [░░░░░░░░░░] 0%   Phase 4
@@ -45,7 +45,7 @@ progress:
 | Metric | Value |
 |--------|-------|
 | Phases completed | 0 |
-| Plans completed | 5 (01-01, 01-02, 01-03, 01-04, 01-05) |
+| Plans completed | 6 (01-01, 01-02, 01-03, 01-04, 01-05, 01-06) |
 | Requirements shipped | 0 / 68 |
 | Validated requirements | 0 |
 | Decisions logged | 8 (in PROJECT.md Key Decisions, all `— Pending`) |
@@ -74,6 +74,9 @@ progress:
 18. **WebSocket compression disabled** — raw H.264 does not compress well, adds CPU overhead per STR-01.
 19. **Frame boundary preservation** — each WS message is 12-byte raw header + payload, preserving frame boundaries for browser WebCodecs decoder.
 20. **Error mapping via string matching** — launch errors mapped to domain codes using strings.Contains on error message prefixes. Simple, sufficient for Phase 1.
+21. **Runtime file reading for --licenses** instead of //go:embed — Go embed cannot reference files in parent directories; THIRD_PARTY_NOTICES is in project root while main.go is in cmd/gateway/.
+22. **Best-effort startup reconciliation** — errors logged but gateway continues starting; partial cleanup is better than refusing to start.
+23. **cenkalti/backoff/v4 for ADB reconnection** — 100ms initial, 5s max, indefinite retry (context cancel is the only exit).
 
 ### Key Research Findings (Phase 1)
 
@@ -85,8 +88,6 @@ progress:
 
 ### Open Questions for Execution
 
-- **Phase 1:** Test prife/goadb shell:v2 against real Android 14+ device during execution
-- **Phase 1:** Download scrcpy v3.3.4 server.jar and verify SHA-256 (first Plan 04 task)
 - **Phase 2:** "Force keyframe" strategy — accept "wait for natural keyframe" or invest in server.jar tweak
 - **Phase 2:** Validate late-joiner cache against a real WebCodecs decoder
 - **Phase 4:** Verify LB supports URL-path or query-param hashing; fallback to in-process WS proxy
@@ -101,9 +102,9 @@ progress:
 
 ## Session Continuity
 
-**Last action:** Plan 01-05 executed — session supervisor with FSM lifecycle, idempotent REST endpoints, single-viewer WebSocket video relay. 5/6 plans complete.
+**Last action:** Plan 01-06 executed — ADB reconnect with backoff, startup reconciliation, graceful shutdown, THIRD_PARTY_NOTICES, systemd unit. Phase 1 complete.
 
-**Next action:** Continue executing Phase 1 — Plan 01-06 (cmd/gateway entry point, healthz, systemd unit) remaining.
+**Next action:** Phase transition — review Phase 1 outcomes, prepare Phase 2 (Multi-Client Broadcast).
 
 **Files of record:**
 
