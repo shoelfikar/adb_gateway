@@ -145,6 +145,32 @@ func (s *DeviceSession) Close(ctx context.Context) error {
 	return nil
 }
 
+// ReleaseResources releases all resources held by the session without
+// transitioning FSM states. Used when ADB disconnects and the session is
+// no longer viable (the video connection, reverse mapping, and device-side
+// process are all dead). Safe to call multiple times (idempotent).
+func (s *DeviceSession) ReleaseResources() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.cleanup != nil {
+		s.cleanup()
+		s.cleanup = nil
+	}
+	if s.videoLn != nil {
+		s.videoLn.Close()
+		s.videoLn = nil
+	}
+	if s.videoConn != nil {
+		s.videoConn.Close()
+		s.videoConn = nil
+	}
+	if s.reverseMap != nil {
+		s.reverseMap.Close()
+		s.reverseMap = nil
+	}
+}
+
 // cleanupResources closes all resources acquired during scrcpy launch.
 // Safe to call multiple times (idempotent).
 func (s *DeviceSession) cleanupResources() {

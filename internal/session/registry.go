@@ -124,115 +124,43 @@ func (r *Registry) CloseAllSessions(ctx context.Context) {
 }
 
 // MarkAllDisconnected handles registry cleanup after ADB server disconnect.
-// It iterates all entries and handles two cases:
-//   - Entries with StateIdle (and no session, or session also idle): REMOVED from the
-//     registry. These are stale — the ADB server can't confirm the device is present.
-//   - Entries with non-idle state (StateActive, StateStarting, StateStopping): transitioned
-//     to StateFailed. These are KEPT so the reconnect loop knows which sessions need
-//     reverse forwards re-issued.
-//
-// StateIdle -> StateFailed is NOT a valid FSM transition, so idle entries are removed
-// rather than transitioned. This also ensures GET /devices does not return stale
-// available entries after ADB disconnect.
+// It releases all session resources (video listeners, reverse mappings, device-side
+// app_process cleanup) and removes ALL entries from the registry. When ADB reconnects,
+// WatchDevices will re-populate the registry via GetOrCreate.
 func (r *Registry) MarkAllDisconnected() {
 	var toRemove []string
 
 	r.devices.Range(func(key, val any) bool {
 		entry := val.(*DeviceEntry)
 		entry.mu.Lock()
+		serial := entry.Serial
 		state := entry.State
-		session := entry.Session
+		sess := entry.Session
+		entry.Session = nil // Clear session reference before releasing
 		entry.mu.Unlock()
 
-		switch state {
-		case StateIdle:
-			// Idle entries are stale after ADB disconnect. Remove them.
-			// Even if they have a session (unlikely), it's not in a recoverable state.
-			toRemove = append(toRemove, entry.Serial)
-			slog.Info("marking idle device disconnected (removing from registry)",
-				"device", entry.Serial,
-			)
-		case StateActive, StateStarting, StateStopping:
-			// Active sessions are transitioned to StateFailed so the reconnect
-			// loop can identify which sessions need reverse forwards re-issued.
-			if newState, err := TransitionTo(state, StateFailed); err == nil {
-				entry.mu.Lock()
-				entry.State = newState
-				entry.mu.Unlock()
-				slog.Info("marking active device disconnected (transitioned to failed)",
-					"device", entry.Serial,
-					"previous_state", state,
-				)
-			} else {
-				// Should not happen: Active/Starting/Stopping -> Failed is valid.
-				slog.Error("failed to transition device to failed state",
-					"device", entry.Serial,
-					"current_state", state,
-					"error", err,
-				)
-			}
-		case StateFailed:
-			// Already failed, nothing to do.
-			slog.Debug("device already in failed state, skipping",
-				"device", entry.Serial,
-			)
-		default:
-			// Unknown state; log but don't crash.
-			slog.Warn("unknown device state during disconnect marking",
-				"device", entry.Serial,
-				"state", state,
-			)
+		// Release session resources (video listener, connection, reverse
+		// mapping, app_process cleanup). The session is no longer viable
+		// after ADB disconnects.
+		if sess != nil {
+			sess.ReleaseResources()
 		}
 
-		_ = session // suppress unused warning
+		toRemove = append(toRemove, serial)
+		slog.Info("removing device from registry after ADB disconnect",
+			"device", serial,
+			"previous_state", state,
+		)
 		return true
 	})
 
-	// Remove idle entries after iteration (can't delete during Range).
+	// Remove all entries after iteration (can't delete during Range).
 	for _, serial := range toRemove {
 		r.devices.Delete(serial)
-		slog.Info("removed idle device from registry after ADB disconnect",
+		slog.Info("removed device from registry after ADB disconnect",
 			"device", serial,
 		)
 	}
-}
-
-// ActiveSessionSpecs returns the reverse mapping specs for all entries that have
-// an active session. This MUST be called BEFORE MarkAllDisconnected, since it
-// queries StateActive entries which are transitioned to StateFailed by that method.
-// Returns a map keyed by device serial, where each value is a slice of specs
-// that can be used with Reconnector.ReissueReverseForwards.
-func (r *Registry) ActiveSessionSpecs() map[string][]adb.ReverseMappingSpec {
-	specs := make(map[string][]adb.ReverseMappingSpec)
-
-	r.devices.Range(func(key, val any) bool {
-		entry := val.(*DeviceEntry)
-		entry.mu.Lock()
-		state := entry.State
-		session := entry.Session
-		entry.mu.Unlock()
-
-		if state != StateActive || session == nil {
-			return true
-		}
-
-		// Get the session's reverse mapping to capture its specs.
-		rm := session.ReverseMap()
-		if rm == nil {
-			return true
-		}
-
-		specs[entry.Serial] = []adb.ReverseMappingSpec{
-			{
-				DeviceSpec: rm.DeviceSpec,
-				HostSpec:   rm.HostSpec,
-			},
-		}
-
-		return true
-	})
-
-	return specs
 }
 
 // WatchDevices reads from the ADB device event channel and updates the registry.

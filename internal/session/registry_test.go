@@ -272,11 +272,21 @@ func TestPerDeviceMutex(t *testing.T) {
 func TestMarkAllDisconnected(t *testing.T) {
 	r := NewRegistry()
 
-	// Create an active entry with a session.
+	// Create an active entry with a session that has closeable resources.
 	activeEntry := r.GetOrCreate("device_active")
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	activeSess := &DeviceSession{
+		ID:         "session-1",
+		Serial:     "device_active",
+		state:      StateActive,
+		videoLn:    ln,
+		reverseMap: &adb.ReverseMapping{DeviceSpec: "localabstract:scrcpy_test", HostSpec: "tcp:0"},
+		cleanup:    func() { ln.Close() },
+	}
 	activeEntry.mu.Lock()
 	activeEntry.State = StateActive
-	activeEntry.Session = &DeviceSession{ID: "session-1", Serial: "device_active"}
+	activeEntry.Session = activeSess
 	activeEntry.mu.Unlock()
 
 	// Create an idle entry with no session.
@@ -300,24 +310,57 @@ func TestMarkAllDisconnected(t *testing.T) {
 	// Call MarkAllDisconnected.
 	r.MarkAllDisconnected()
 
-	// Active entry should be transitioned to StateFailed and KEPT.
-	activeEntry, ok := r.Get("device_active")
-	assert.True(t, ok, "active device should still be in registry after MarkAllDisconnected")
-	assert.Equal(t, StateFailed, activeEntry.GetState(), "active device should transition to StateFailed")
+	// ALL entries should be REMOVED from the registry (not just idle ones).
+	_, ok := r.Get("device_active")
+	assert.False(t, ok, "active device should be removed from registry after MarkAllDisconnected")
 
-	// Idle entry should be REMOVED from the registry.
 	_, ok = r.Get("device_idle")
 	assert.False(t, ok, "idle device should be removed from registry after MarkAllDisconnected")
 
-	// Starting entry should be transitioned to StateFailed and KEPT.
-	startingEntry, ok = r.Get("device_starting")
-	assert.True(t, ok, "starting device should still be in registry after MarkAllDisconnected")
-	assert.Equal(t, StateFailed, startingEntry.GetState(), "starting device should transition to StateFailed")
+	_, ok = r.Get("device_starting")
+	assert.False(t, ok, "starting device should be removed from registry after MarkAllDisconnected")
 
-	// Failed entry should remain in StateFailed.
-	failedEntry, ok = r.Get("device_failed")
-	assert.True(t, ok, "already-failed device should still be in registry")
-	assert.Equal(t, StateFailed, failedEntry.GetState(), "already-failed device should remain StateFailed")
+	_, ok = r.Get("device_failed")
+	assert.False(t, ok, "failed device should be removed from registry after MarkAllDisconnected")
+
+	// Registry should be empty.
+	entries := r.List()
+	assert.Empty(t, entries, "registry should be empty after MarkAllDisconnected")
+}
+
+func TestMarkAllDisconnected_ReleasesSessionResources(t *testing.T) {
+	r := NewRegistry()
+
+	// Create an entry with a session that has a real listener.
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	cleanupCalled := false
+	sess := &DeviceSession{
+		ID:         "session-1",
+		Serial:     "device_active",
+		state:      StateActive,
+		videoLn:    ln,
+		reverseMap: &adb.ReverseMapping{DeviceSpec: "localabstract:scrcpy_test", HostSpec: "tcp:0"},
+		cleanup:    func() { cleanupCalled = true },
+	}
+
+	entry := r.GetOrCreate("device_active")
+	entry.mu.Lock()
+	entry.State = StateActive
+	entry.Session = sess
+	entry.mu.Unlock()
+
+	r.MarkAllDisconnected()
+
+	// Cleanup function should have been called.
+	assert.True(t, cleanupCalled, "ReleaseResources should call cleanup function")
+
+	// Registry should be empty.
+	entries := r.List()
+	assert.Empty(t, entries, "registry should be empty after MarkAllDisconnected")
+
+	// ActiveSessionSpecs on empty registry returns empty map (method removed, but verify via List).
+	assert.Empty(t, entries)
 }
 
 func TestMarkAllDisconnected_EmptyRegistry(t *testing.T) {
@@ -330,10 +373,10 @@ func TestMarkAllDisconnected_EmptyRegistry(t *testing.T) {
 	assert.Empty(t, entries, "empty registry should remain empty after MarkAllDisconnected")
 }
 
-func TestMarkAllDisconnected_IdleEntryRemoved(t *testing.T) {
+func TestMarkAllDisconnected_RemovesAllEntries(t *testing.T) {
 	r := NewRegistry()
 
-	// Create idle entry with no session.
+	// Create idle entries (no sessions).
 	r.GetOrCreate("device1")
 	r.GetOrCreate("device2")
 
@@ -346,11 +389,15 @@ func TestMarkAllDisconnected_IdleEntryRemoved(t *testing.T) {
 	// Mark all disconnected.
 	r.MarkAllDisconnected()
 
-	// Both idle entries should be REMOVED (not transitioned to failed).
+	// Both entries should be REMOVED (all entries, not just idle ones).
 	_, ok1 = r.Get("device1")
 	_, ok2 = r.Get("device2")
-	assert.False(t, ok1, "idle device1 should be removed from registry")
-	assert.False(t, ok2, "idle device2 should be removed from registry")
+	assert.False(t, ok1, "device1 should be removed from registry")
+	assert.False(t, ok2, "device2 should be removed from registry")
+
+	// Registry should be completely empty.
+	entries := r.List()
+	assert.Empty(t, entries, "registry should be empty after MarkAllDisconnected")
 }
 
 func TestWatchDevices_ReturnsTrueOnChannelClose(t *testing.T) {
@@ -422,67 +469,24 @@ func TestWatchDevices_UpdatesFailedToIdle(t *testing.T) {
 	}, 1*time.Second, 10*time.Millisecond, "failed device should recover to StateIdle on reconnect event")
 }
 
-func TestActiveSessionSpecs_EmptyRegistry(t *testing.T) {
-	r := NewRegistry()
-
-	specs := r.ActiveSessionSpecs()
-	assert.Empty(t, specs, "empty registry should return empty specs")
-}
-
-func TestActiveSessionSpecs_WithActiveSession(t *testing.T) {
-	r := NewRegistry()
-
-	// Create a listener to get a real port (needed for session creation).
+func TestReleaseResources_Idempotent(t *testing.T) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
-	defer ln.Close()
 
-	// Create an active entry with a session that has a reverse mapping.
-	entry := r.GetOrCreate("device1")
-	rm := &adb.ReverseMapping{
-		DeviceSpec: "localabstract:scrcpy_testscid",
-		HostSpec:   "tcp:42001",
-	}
+	cleanupCount := 0
 	sess := &DeviceSession{
-		ID:         "session-1",
-		Serial:     "device1",
+		ID:         "session-idempotent",
+		Serial:     "device_test",
 		state:      StateActive,
 		videoLn:    ln,
-		reverseMap: rm,
-		scid:       "testscid",
+		reverseMap: &adb.ReverseMapping{DeviceSpec: "localabstract:scrcpy_test", HostSpec: "tcp:0"},
+		cleanup:    func() { cleanupCount++ },
 	}
-	entry.mu.Lock()
-	entry.State = StateActive
-	entry.Session = sess
-	entry.mu.Unlock()
 
-	specs := r.ActiveSessionSpecs()
-	assert.Len(t, specs, 1, "should have specs for one device")
-	assert.Contains(t, specs, "device1")
+	// Call ReleaseResources twice — should not panic or double-close.
+	sess.ReleaseResources()
+	assert.Equal(t, 1, cleanupCount, "cleanup should be called exactly once")
 
-	deviceSpecs := specs["device1"]
-	assert.Len(t, deviceSpecs, 1, "should have one spec per device")
-	assert.Equal(t, "localabstract:scrcpy_testscid", deviceSpecs[0].DeviceSpec)
-	assert.Equal(t, "tcp:42001", deviceSpecs[0].HostSpec)
-}
-
-func TestActiveSessionSpecs_IgnoresInactiveEntries(t *testing.T) {
-	r := NewRegistry()
-
-	// Create an idle entry (should be ignored).
-	entry := r.GetOrCreate("device_idle")
-	entry.mu.Lock()
-	entry.State = StateIdle
-	entry.Session = &DeviceSession{ID: "session-idle", Serial: "device_idle"}
-	entry.mu.Unlock()
-
-	// Create a failed entry (should be ignored).
-	entry2 := r.GetOrCreate("device_failed")
-	entry2.mu.Lock()
-	entry2.State = StateFailed
-	entry2.Session = &DeviceSession{ID: "session-failed", Serial: "device_failed"}
-	entry2.mu.Unlock()
-
-	specs := r.ActiveSessionSpecs()
-	assert.Empty(t, specs, "should not return specs for idle or failed entries")
+	sess.ReleaseResources() // second call — should be a no-op
+	assert.Equal(t, 1, cleanupCount, "cleanup should still only be called once (idempotent)")
 }
