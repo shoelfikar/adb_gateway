@@ -3,7 +3,7 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-last_updated: "2026-05-07T04:34:11Z"
+last_updated: "2026-05-07T05:40:00Z"
 progress:
   total_phases: 4
   completed_phases: 0
@@ -30,11 +30,11 @@ progress:
 | Phase | 1 — Single-Device Streaming Foundation |
 | Plan | 6 plans (01-01 through 01-06) |
 | Status | executing |
-| Phase progress | 4/6 plans complete |
+| Phase progress | 5/6 plans complete |
 | Overall progress | 0/4 phases complete |
 
 ```
-[████░░░░░░] 67%   Phase 1 (executing)
+[████████░░] 83%   Phase 1 (executing)
 [░░░░░░░░░░] 0%   Phase 2
 [░░░░░░░░░░] 0%   Phase 3
 [░░░░░░░░░░] 0%   Phase 4
@@ -45,7 +45,7 @@ progress:
 | Metric | Value |
 |--------|-------|
 | Phases completed | 0 |
-| Plans completed | 4 (01-01, 01-02, 01-03, 01-04) |
+| Plans completed | 5 (01-01, 01-02, 01-03, 01-04, 01-05) |
 | Requirements shipped | 0 / 68 |
 | Validated requirements | 0 |
 | Decisions logged | 8 (in PROJECT.md Key Decisions, all `— Pending`) |
@@ -69,6 +69,11 @@ progress:
 13. **Launcher treats RunShellCommand errors as non-fatal** — scrcpy server process starts in background; actual failure caught by Accept timeout.
 14. **LaunchResult.CodecMeta stores raw 12 bytes** read from connection, reconstructed for logging — avoids double-read issue with io.Reader.
 15. **scrcpy v3.3.4 server.jar SHA-256: 8588238c9a5a00aa542906b6ec7e6d5541d9ffb9b5d0f6e1bc0e365e2303079e** — pinned and verified.
+16. **session.Launcher interface** for testability — avoids circular import (session -> api), enables mock injection. *scrcpy.Launcher satisfies the interface.
+17. **IsSessionActive reads fields directly when caller holds lock** — prevents deadlock between handler (entry.Lock) and getter methods (entry.mu.Lock).
+18. **WebSocket compression disabled** — raw H.264 does not compress well, adds CPU overhead per STR-01.
+19. **Frame boundary preservation** — each WS message is 12-byte raw header + payload, preserving frame boundaries for browser WebCodecs decoder.
+20. **Error mapping via string matching** — launch errors mapped to domain codes using strings.Contains on error message prefixes. Simple, sufficient for Phase 1.
 
 ### Key Research Findings (Phase 1)
 
@@ -96,9 +101,9 @@ progress:
 
 ## Session Continuity
 
-**Last action:** Plan 01-04 executed — scrcpy v3.3.4 server.jar embedded, 8-step launcher with cleanup-on-failure, video frame reader with io.ReadFull discipline. 4/6 plans complete.
+**Last action:** Plan 01-05 executed — session supervisor with FSM lifecycle, idempotent REST endpoints, single-viewer WebSocket video relay. 5/6 plans complete.
 
-**Next action:** Continue executing Phase 1 — Plans 01-05 and 01-06 remaining.
+**Next action:** Continue executing Phase 1 — Plan 01-06 (cmd/gateway entry point, healthz, systemd unit) remaining.
 
 **Files of record:**
 
