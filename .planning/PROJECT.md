@@ -63,7 +63,7 @@ Reliable, low-latency streaming and control of many physical Android devices, ex
 ## Constraints
 
 - **Tech stack**: Go for the gateway service — required for performance and concurrency, matches the prior architecture decision.
-- **Streaming agent**: scrcpy `server.jar` (open source, BSD-style license) — must comply with its license terms; vendor a pinned version with the gateway.
+- **Streaming agent**: scrcpy `server.jar` (Apache-2.0) — must comply with attribution requirements (ship `THIRD_PARTY_NOTICES`); vendor a pinned version with the gateway and embed via `//go:embed`.
 - **ADB transport**: Local ADB server only (no remote ADB) — devices are USB-attached.
 - **No media decode**: Server must relay raw bytes; encoding/decoding is the device's and browser's job.
 - **Auth**: API-key based, validated against a value provisioned by `pelni_server` — keep it simple in v1; revisit if/when multi-tenant requirements appear.

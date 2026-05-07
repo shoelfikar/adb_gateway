@@ -3,7 +3,7 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-last_updated: "2026-05-07T03:55:00.000Z"
+last_updated: "2026-05-07T04:10:47Z"
 progress:
   total_phases: 4
   completed_phases: 0
@@ -15,7 +15,7 @@ progress:
 
 **Initialized:** 2026-05-06
 **Mode:** YOLO, sequential, standard granularity
-**Last updated:** 2026-05-07 (Phase 1 executing, Plans 01-02 complete)
+**Last updated:** 2026-05-07 (Phase 1 executing, Plans 01-03 complete)
 
 ## Project Reference
 
@@ -30,11 +30,11 @@ progress:
 | Phase | 1 — Single-Device Streaming Foundation |
 | Plan | 6 plans (01-01 through 01-06) |
 | Status | executing |
-| Phase progress | 2/6 plans complete |
+| Phase progress | 3/6 plans complete |
 | Overall progress | 0/4 phases complete |
 
 ```
-[██░░░░░░░░] 33%   Phase 1 (executing)
+[███░░░░░░░] 50%   Phase 1 (executing)
 [░░░░░░░░░░] 0%   Phase 2
 [░░░░░░░░░░] 0%   Phase 3
 [░░░░░░░░░░] 0%   Phase 4
@@ -45,7 +45,7 @@ progress:
 | Metric | Value |
 |--------|-------|
 | Phases completed | 0 |
-| Plans completed | 2 (01-01, 01-02) |
+| Plans completed | 3 (01-01, 01-02, 01-03) |
 | Requirements shipped | 0 / 68 |
 | Validated requirements | 0 |
 | Decisions logged | 8 (in PROJECT.md Key Decisions, all `— Pending`) |
@@ -62,6 +62,9 @@ progress:
 6. **API-key auth from day one** with constant-time compare and primary/secondary key rotation; bind to `127.0.0.1` or private interface.
 7. **Apache-2.0 attribution** for embedded `server.jar`: ship `THIRD_PARTY_NOTICES`, expose via `--licenses` / endpoint, record pinned version + commit SHA in `--version`.
 8. **Coordination is opt-in** — single-instance deployments compile and run without Redis; `internal/coord/` only wired in Phase 4.
+9. **DeviceSession placeholder type** in `internal/session/registry.go` — real implementation with errgroup and video relay deferred to Plan 05.
+10. **TransitionTo is a pure function** — caller assigns result under per-device mutex; no side effects inside the FSM.
+11. **WatchDevices treats "device", "recovery", "offline" as connect states** — offline devices are still tracked so session manager can attempt connection.
 
 ### Key Research Findings (Phase 1)
 
@@ -89,9 +92,9 @@ progress:
 
 ## Session Continuity
 
-**Last action:** Phase 1 planned (6 plans, 5 waves). Verification passed with 0 blockers.
+**Last action:** Plan 01-03 executed — device registry with sync.Map and session FSM with D-05 transition validation. 3/6 plans complete.
 
-**Next action:** Continue executing Phase 1 — Plans 01-03 through 01-06 remaining.
+**Next action:** Continue executing Phase 1 — Plans 01-04 through 01-06 remaining.
 
 **Files of record:**
 
@@ -108,4 +111,4 @@ progress:
 - `android-monitoring-architecture.md` — original architecture sketch (still consistent with researched plan)
 
 ---
-*State updated: 2026-05-07 by plan 01-02 execution*
+*State updated: 2026-05-07 by plan 01-03 execution*

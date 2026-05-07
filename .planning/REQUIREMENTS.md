@@ -28,7 +28,7 @@ Requirements for initial release. Each maps to exactly one roadmap phase.
 
 ### Device Lifecycle
 
-- [ ] **DEV-01**: Service tracks connected devices in an in-memory registry, fed by `host:track-devices` long-poll
+- [x] **DEV-01**: Service tracks connected devices in an in-memory registry, fed by `host:track-devices` long-poll
 - [ ] **DEV-02**: REST `GET /devices` returns the current list of devices with serial, status, and (if active) session info
 - [ ] **DEV-03**: REST `POST /devices/{serial}/sessions` creates a session for a device (idempotent: returns existing session if active)
 - [ ] **DEV-04**: REST `DELETE /devices/{serial}/sessions/{id}` ends a session, tearing down reverse tunnels and stopping `app_process`
@@ -164,7 +164,7 @@ Each v1 requirement is mapped to exactly one phase. See `.planning/ROADMAP.md` f
 | ADB-07 | Phase 1 | Shipped (01-02) |
 | ADB-08 | Phase 1 | Pending |
 | **_Device Lifecycle_** | | |
-| DEV-01 | Phase 1 | Pending |
+| DEV-01 | Phase 1 | Shipped (01-03) |
 | DEV-02 | Phase 1 | Pending |
 | DEV-03 | Phase 1 | Pending |
 | DEV-04 | Phase 1 | Pending |
