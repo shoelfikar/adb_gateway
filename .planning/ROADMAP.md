@@ -53,7 +53,7 @@ Plans:
 - [x] 01-05-PLAN.md -- Session lifecycle: supervisor, REST endpoints, video WebSocket relay
 - [x] 01-06-PLAN.md -- Hardening: ADB reconnect, startup reconciliation, graceful shutdown, deploy artifacts
 - [x] 01-07-PLAN.md -- Gap closure: ADB reconnection lifecycle (detect disconnect, reconnect with backoff, restart watcher, re-issue reverse forwards)
-
+- [ ] 01-08-PLAN.md -- Gap closure: fix stale registry entries, release session resources, simplify reconnect loop
 **Research flag**: yes -- `/gsd-plan-phase` should run `/gsd-research-phase` first to spike the in-house `reverse:forward` helper against AOSP `SERVICES.TXT` (refine ~150 LOC estimate), validate `prife/goadb` shell-v2 against a real Android 14/15 device, and confirm the pinned scrcpy `server.jar` version + frame-header layout against fixture bytes.
 
 ### Phase 2: Multi-Client + Control
@@ -143,7 +143,7 @@ Plans:
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Single-Device Streaming Foundation | 7/7 | complete | 01-01, 01-02, 01-03, 01-04, 01-05, 01-06, 01-07 |
+| 1. Single-Device Streaming Foundation | 8 | in-progress | 01-01, 01-02, 01-03, 01-04, 01-05, 01-06, 01-07 |
 | 2. Multi-Client + Control | 0/0 | not started | -- |
 | 3. Multi-Device Fleet | 0/0 | not started | -- |
 | 4. Horizontal Scaling | 0/0 | not started | -- |
