@@ -1,9 +1,10 @@
 module github.com/pelni/adb-gateway
 
-go 1.24
+go 1.25.0
 
 require (
 	github.com/go-chi/chi/v5 v5.2.5
+	github.com/google/uuid v1.6.0
 	github.com/knadh/koanf/parsers/yaml v1.1.0
 	github.com/knadh/koanf/providers/env v1.1.0
 	github.com/knadh/koanf/providers/file v1.2.1
@@ -13,6 +14,7 @@ require (
 	github.com/prometheus/client_golang v1.23.2
 	github.com/spf13/pflag v1.0.6
 	github.com/stretchr/testify v1.11.1
+	golang.org/x/sync v0.13.0
 )
 
 require (

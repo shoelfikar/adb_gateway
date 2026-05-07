@@ -6,12 +6,15 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+
+	"github.com/pelni/adb-gateway/internal/adb"
 	"github.com/pelni/adb-gateway/internal/config"
+	"github.com/pelni/adb-gateway/internal/session"
 )
 
 // NewRouter creates and returns a chi.Router with the full middleware stack
 // and route registrations for the ADB Gateway API.
-func NewRouter(cfg *config.Config) http.Handler {
+func NewRouter(cfg *config.Config, registry *session.Registry, adbClient *adb.Client, hostServices *adb.HostServices) http.Handler {
 	r := chi.NewRouter()
 
 	// Global middleware stack (order matters)
@@ -28,9 +31,14 @@ func NewRouter(cfg *config.Config) http.Handler {
 	r.Group(func(r chi.Router) {
 		r.Use(APIKeyAuth(cfg.APIKeyPrimary, cfg.APIKeySecondary))
 
-		// Device routes (handlers added in later plans)
+		// Device and session routes
 		r.Route("/devices", func(r chi.Router) {
-			// Placeholder -- actual handlers added in Plan 05
+			r.Get("/", ListDevices(registry))
+			r.Route("/{serial}", func(r chi.Router) {
+				r.Post("/sessions", CreateSession(registry, adbClient, hostServices))
+				r.Delete("/sessions/{sessionID}", DeleteSession(registry))
+				// Video WebSocket route added in Plan 05 Task 2
+			})
 		})
 	})
 

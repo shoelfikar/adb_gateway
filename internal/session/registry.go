@@ -3,7 +3,6 @@ package session
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 	"sync"
 
@@ -16,8 +15,43 @@ import (
 type DeviceEntry struct {
 	Serial  string
 	State   SessionState
-	Session *DeviceSession // nil when no active session; type defined later (Plan 05)
+	Session *DeviceSession // nil when no active session; defined in supervisor.go
 	mu      sync.Mutex
+}
+
+// Lock acquires the per-device mutex. Used by external packages (e.g., api handlers)
+// that need to read/modify DeviceEntry fields atomically.
+func (e *DeviceEntry) Lock() { e.mu.Lock() }
+
+// Unlock releases the per-device mutex.
+func (e *DeviceEntry) Unlock() { e.mu.Unlock() }
+
+// GetState returns the current session state. Thread-safe.
+func (e *DeviceEntry) GetState() SessionState {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.State
+}
+
+// SetState sets the session state. Thread-safe.
+func (e *DeviceEntry) SetState(s SessionState) {
+	e.mu.Lock()
+	e.State = s
+	e.mu.Unlock()
+}
+
+// GetSession returns the current session, if any. Thread-safe.
+func (e *DeviceEntry) GetSession() *DeviceSession {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.Session
+}
+
+// SetSession sets the session pointer. Thread-safe.
+func (e *DeviceEntry) SetSession(s *DeviceSession) {
+	e.mu.Lock()
+	e.Session = s
+	e.mu.Unlock()
 }
 
 // Registry tracks connected devices using a thread-safe sync.Map.
@@ -128,16 +162,4 @@ func (r *Registry) WatchDevices(ctx context.Context, events <-chan adb.DeviceEve
 	}
 }
 
-// DeviceSession is a placeholder type for the session supervisor that will
-// be defined in Plan 05. For now, it's a minimal stub so that the registry
-// can reference it. The Close method is required by CloseAllSessions.
-type DeviceSession struct {
-	ID     string
-	Serial string
-}
-
-// Close gracefully shuts down the session. This is a placeholder
-// implementation; the real version will be defined in Plan 05.
-func (s *DeviceSession) Close(ctx context.Context) error {
-	return fmt.Errorf("DeviceSession.Close not yet implemented")
-}
+// DeviceSession is defined in supervisor.go.

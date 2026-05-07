@@ -11,6 +11,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/pelni/adb-gateway/internal/config"
+	"github.com/pelni/adb-gateway/internal/session"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -306,8 +307,9 @@ func TestRouterHealthzNoAuth(t *testing.T) {
 		ADBAddr:         "localhost:5037",
 		LogLevel:        "info",
 	}
+	registry := session.NewRegistry()
 
-	router := NewRouter(cfg)
+	router := NewRouter(cfg, registry, nil, nil)
 
 	// Healthz should NOT require auth
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
@@ -325,8 +327,9 @@ func TestRouterMetricsNoAuth(t *testing.T) {
 		ADBAddr:         "localhost:5037",
 		LogLevel:        "info",
 	}
+	registry := session.NewRegistry()
 
-	router := NewRouter(cfg)
+	router := NewRouter(cfg, registry, nil, nil)
 
 	// Metrics should NOT require auth
 	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
@@ -344,8 +347,9 @@ func TestRouterDevicesRequiresAuth(t *testing.T) {
 		ADBAddr:         "localhost:5037",
 		LogLevel:        "info",
 	}
+	registry := session.NewRegistry()
 
-	router := NewRouter(cfg)
+	router := NewRouter(cfg, registry, nil, nil)
 
 	// /devices should require auth
 	req := httptest.NewRequest(http.MethodGet, "/devices", nil)
@@ -363,16 +367,17 @@ func TestRouterDevicesWithAuth(t *testing.T) {
 		ADBAddr:         "localhost:5037",
 		LogLevel:        "info",
 	}
+	registry := session.NewRegistry()
 
-	router := NewRouter(cfg)
+	router := NewRouter(cfg, registry, nil, nil)
 
-	// /devices with auth should pass through (404 since no handlers yet, but not 401)
+	// /devices with auth should pass through and return 200 with empty device list
 	req := httptest.NewRequest(http.MethodGet, "/devices", nil)
 	req.Header.Set("X-API-Key", "test-key")
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 
-	assert.NotEqual(t, http.StatusUnauthorized, w.Code)
+	assert.Equal(t, http.StatusOK, w.Code)
 }
 
 func TestNewRouterMiddlewareStack(t *testing.T) {
@@ -383,8 +388,9 @@ func TestNewRouterMiddlewareStack(t *testing.T) {
 		ADBAddr:         "localhost:5037",
 		LogLevel:        "info",
 	}
+	registry := session.NewRegistry()
 
-	router := NewRouter(cfg)
+	router := NewRouter(cfg, registry, nil, nil)
 	assert.NotNil(t, router, "NewRouter should return a non-nil handler")
 
 	// Verify that the router is a chi.Router

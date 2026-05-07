@@ -9,9 +9,11 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/pelni/adb-gateway/internal/adb"
 	"github.com/pelni/adb-gateway/internal/api"
 	"github.com/pelni/adb-gateway/internal/config"
 	"github.com/pelni/adb-gateway/internal/obs"
+	"github.com/pelni/adb-gateway/internal/session"
 )
 
 // Build-time variables set via -ldflags.
@@ -44,7 +46,18 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	router := api.NewRouter(cfg)
+	// Initialize ADB client and host services
+	adbClient := adb.NewClient(cfg.ADBAddr)
+	hostServices, err := adb.NewHostServices(adbClient)
+	if err != nil {
+		slog.Error("failed to initialize ADB host services", "error", err)
+		os.Exit(1)
+	}
+
+	// Initialize device registry
+	registry := session.NewRegistry()
+
+	router := api.NewRouter(cfg, registry, adbClient, hostServices)
 
 	srv := &http.Server{
 		Addr:         cfg.ListenAddr,
@@ -75,6 +88,9 @@ func main() {
 
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer shutdownCancel()
+
+	// Drain all active sessions
+	registry.CloseAllSessions(shutdownCtx)
 
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		slog.Error("http server shutdown error", "error", err)
