@@ -116,10 +116,18 @@ func TestHubBackpressure(t *testing.T) {
 	assert.GreaterOrEqual(t, int(droppedDelta), 4, "should have dropped at least 4 frames")
 }
 
-// TestHubSlowDisconnect verifies STR-06: after 120 consecutive drops, the
-// viewer is evicted with reason "slow_consumer" and its send channel is closed.
+// TestHubSlowDisconnect verifies STR-06: after MaxConsecutiveDrops consecutive
+// drops, the viewer is evicted with reason "slow_consumer" and its send channel
+// is closed. Uses small thresholds (bufFrames=3, maxDrops=5) to keep the test
+// fast and deterministic — the eviction logic is the same regardless of thresholds.
 func TestHubSlowDisconnect(t *testing.T) {
-	h := newTestHub(t)
+	h := NewHub(HubOpts{
+		Stream:              "video",
+		BufFrames:           3,
+		MaxConsecutiveDrops: 5,
+		Log:                 slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+	h.SetCodecMeta([12]byte{0xAA, 0xBB, 0xCC, 0x44, 0x33, 0x22, 0x11, 0x00, 0x10, 0x00, 0x00, 0x00})
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 
 	droppedBefore := testutil.ToFloat64(obs.FramesDroppedTotal.WithLabelValues("video"))
@@ -128,41 +136,41 @@ func TestHubSlowDisconnect(t *testing.T) {
 	require.NoError(t, err)
 
 	go func() {
-		if err := h.Run(ctx); err != nil && err != err && err != context.Canceled {
+		if err := h.Run(ctx); err != nil && err != context.Canceled {
 			t.Logf("hub run: %v", err)
 		}
 	}()
 
-	// Publish enough frames to trigger eviction.
-	// The viewer's channel has capacity 60 with 1 metadata pre-loaded,
-	// leaving room for 59 more frames. After filling, each further frame
-	// is dropped. 120 consecutive drops triggers eviction.
-	// We need at least 59 (buffer fill) + 120 (consecutive drops) = 179
+	// Give the Hub goroutine a moment to start processing.
+	time.Sleep(10 * time.Millisecond)
+
+	// The viewer's channel has capacity 3 with 1 metadata pre-loaded,
+	// leaving room for 2 more frames. After filling, each further frame
+	// is dropped. 5 consecutive drops triggers eviction.
+	// We need at least 2 (buffer fill) + 5 (consecutive drops) = 7
 	// frames to make it through h.in to the Hub goroutine.
-	// Since h.in has capacity 16 and Publish is non-blocking, we publish
-	// in small batches with sleeps to ensure the Hub goroutine processes
-	// frames between batches.
-	for i := 0; i < 250; i++ {
+	// Publish plenty of frames with periodic yields so the Hub goroutine
+	// can process them.
+	for i := 0; i < 40; i++ {
 		h.Publish(mkFrame(byte(i%256), false))
-		// Yield periodically so the Hub goroutine can process frames.
-		if i%50 == 49 {
-			time.Sleep(20 * time.Millisecond)
+		if i%10 == 9 {
+			time.Sleep(10 * time.Millisecond)
 		}
 	}
 
 	// Wait for the Hub goroutine to process all frames and evict the viewer.
 	assert.Eventually(t, func() bool {
 		return h.ViewerCountForTest() == 0
-	}, 2*time.Second, 20*time.Millisecond, "viewer should be evicted after 120 consecutive drops")
+	}, 2*time.Second, 10*time.Millisecond, "viewer should be evicted after 5 consecutive drops")
 
 	// The viewer's channel should be closed by eviction.
 	// Drain remaining messages and verify closure.
 	drainAndVerifyClosed(t, v1ch, "viewer-1")
 
-	// Verify that at least 120 drops were recorded.
+	// Verify that drops were recorded (at least maxConsecutiveDrops).
 	droppedAfter := testutil.ToFloat64(obs.FramesDroppedTotal.WithLabelValues("video"))
 	droppedDelta := droppedAfter - droppedBefore
-	assert.GreaterOrEqual(t, int(droppedDelta), 120, "should have at least 120 drops")
+	assert.GreaterOrEqual(t, int(droppedDelta), 5, "should have at least 5 drops")
 
 	cancel()
 }
@@ -209,10 +217,21 @@ func TestHubLateJoiner(t *testing.T) {
 }
 
 // TestHubDropCounterResets verifies Pitfall 2: the eviction counter is based
-// on CONSECUTIVE drops, not cumulative. A viewer that catches up after 119 drops
-// gets a clean slate, and is NOT evicted even after > 120 cumulative drops.
+// on CONSECUTIVE drops, not cumulative. A viewer that catches up after some drops
+// gets a clean slate, and is NOT evicted even after cumulative drops exceed the
+// threshold.
+//
+// Strategy: use BufFrames=10 and MaxConsecutiveDrops=20. Fill the buffer (10 slots),
+// accumulate 10 drops (< 20), drain one to reset, then accumulate 11 more drops.
+// Cumulative = 10+11 = 21 > 20, but consecutive never reaches 20.
 func TestHubDropCounterResets(t *testing.T) {
-	h := newTestHub(t)
+	h := NewHub(HubOpts{
+		Stream:              "video",
+		BufFrames:           10,
+		MaxConsecutiveDrops: 20,
+		Log:                 slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+	h.SetCodecMeta([12]byte{0xAA, 0xBB, 0xCC, 0x44, 0x33, 0x22, 0x11, 0x00, 0x10, 0x00, 0x00, 0x00})
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 
 	v1ch, _, err := h.Subscribe("viewer-1")
@@ -224,43 +243,37 @@ func TestHubDropCounterResets(t *testing.T) {
 		}
 	}()
 
-	// Phase 1: Publish 60 P-frames to fill the viewer's buffer.
-	// After 1 metadata pre-loaded, the buffer has room for 59 more.
-	// But we'll fill it until the viewer stops accepting.
-	for i := 0; i < 60; i++ {
-		h.Publish(mkFrame(byte(i%256), false))
+	// Give the Hub goroutine a moment to start.
+	time.Sleep(10 * time.Millisecond)
+
+	// Phase 1: Fill the viewer's buffer (capacity 10, 1 metadata pre-loaded = 9 slots left).
+	// Publish 20 frames: 9 succeed (fill buffer), 11 dropped (consecutiveDrops=11 < 20).
+	for i := 0; i < 20; i++ {
+		h.Publish(mkFrame(byte(i), false))
 	}
 	time.Sleep(50 * time.Millisecond)
 
-	// Verify viewer count is still 1 (not evicted).
-	assert.Equal(t, 1, h.ViewerCountForTest(), "viewer should still be registered after filling buffer")
+	// Verify viewer is still registered (11 < 20 consecutive drops).
+	assert.Equal(t, 1, h.ViewerCountForTest(), "viewer should still be registered after 11 drops")
 
-	// Phase 2: Publish 59 more frames. These should be dropped (consecutiveDrops = 59).
-	for i := 0; i < 59; i++ {
-		h.Publish(mkFrame(byte((i + 60) % 256), false))
-	}
-	time.Sleep(50 * time.Millisecond)
-
-	// Verify viewer is still registered.
-	assert.Equal(t, 1, h.ViewerCountForTest(), "viewer should still be registered after 59 drops")
-
-	// Phase 3: Drain ONE message from the channel to allow a successful send
-	// (which resets the consecutive drops counter to 0).
-	<-v1ch // drain one message (metadata)
-
-	// Publish 1 more frame — this should succeed and reset consecutiveDrops to 0.
+	// Phase 2: Drain ONE message to free a slot, then publish 1 frame that succeeds.
+	// This resets consecutiveDrops to 0.
+	<-v1ch // drain metadata
 	h.Publish(mkFrame(0xAA, false))
+	time.Sleep(30 * time.Millisecond)
+
+	// Phase 3: Publish 18 more frames. The freed slot is now full again.
+	// All 18 are dropped (consecutiveDrops=18, cumulative=11+18=29 > 20).
+	for i := 0; i < 18; i++ {
+		h.Publish(mkFrame(byte(i+30), false))
+		if i%6 == 5 {
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
 	time.Sleep(50 * time.Millisecond)
 
-	// Phase 4: Publish 119 more frames — the channel refills and 59 more drop.
-	// Total cumulative drops = 59 + 59 = 118, but consecutive never reaches 120.
-	for i := 0; i < 119; i++ {
-		h.Publish(mkFrame(byte(i%256), false))
-	}
-	time.Sleep(100 * time.Millisecond)
-
-	// Verify viewer was NOT evicted — cumulative drops are well over 120 but
-	// consecutive never reached 120 because of the reset.
+	// Verify viewer was NOT evicted — cumulative drops (29) exceed maxConsecutiveDrops (20)
+	// but consecutive (18) never reached 20 because of the reset.
 	assert.Equal(t, 1, h.ViewerCountForTest(), "viewer should NOT be evicted — consecutive drops reset on success")
 
 	cancel()
