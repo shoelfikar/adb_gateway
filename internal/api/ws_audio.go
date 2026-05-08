@@ -13,24 +13,15 @@ import (
 	"github.com/pelni/adb-gateway/internal/session"
 )
 
-// StreamVideo returns an HTTP handler that upgrades the connection to a WebSocket
-// and streams video frames from the device's Hub (fan-out) to the client.
-//
-// Phase 2: replaces Phase 1's direct-relay approach with Hub.Subscribe.
-// Multiple viewers can connect simultaneously; each receives the same frames.
-// Late joiners receive cached codec metadata + most recent keyframe before
-// the live tail (STR-07).
-//
-// Per STR-08: ping loop with idle disconnect.
-// Per STR-09: SetReadLimit applied on every connection.
-func StreamVideo(registry *session.Registry, allowedOrigins []string, cfg *config.Config) http.HandlerFunc {
+// StreamAudio mirrors StreamVideo for the audio stream (STR-02).
+// Returns 404 AUDIO_UNAVAILABLE per D-12 when DeviceEntry.AudioAvailable=false.
+func StreamAudio(registry *session.Registry, allowedOrigins []string, cfg *config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		serial := chi.URLParam(r, "serial")
 		if serial == "" {
 			writeError(w, ErrDeviceNotFound)
 			return
 		}
-
 		if !serialPattern.MatchString(serial) {
 			writeError(w, ErrDeviceNotFound)
 			return
@@ -41,16 +32,21 @@ func StreamVideo(registry *session.Registry, allowedOrigins []string, cfg *confi
 			writeError(w, ErrDeviceOffline)
 			return
 		}
+		if !entry.GetAudioAvailable() {
+			writeError(w, ErrAudioUnavailable) // 404 per D-12 / D-19
+			return
+		}
 
 		sess := entry.GetSession()
 		if sess == nil || sess.State() != session.StateActive {
 			writeError(w, ErrDeviceOffline)
 			return
 		}
-
-		hub := sess.VideoHub()
+		hub := sess.AudioHub()
 		if hub == nil {
-			writeError(w, ErrDeviceOffline)
+			// Defense in depth: AudioAvailable was true but Hub is nil
+			// (could happen during shutdown). Return 404 cleanly.
+			writeError(w, ErrAudioUnavailable)
 			return
 		}
 
@@ -58,7 +54,7 @@ func StreamVideo(registry *session.Registry, allowedOrigins []string, cfg *confi
 
 		ws, err := websocket.Accept(w, r, opts)
 		if err != nil {
-			slog.Error("ws video accept failed", "device", serial, "error", err)
+			slog.Error("ws audio accept failed", "device", serial, "error", err)
 			return
 		}
 		defer ws.CloseNow()
@@ -69,11 +65,11 @@ func StreamVideo(registry *session.Registry, allowedOrigins []string, cfg *confi
 		defer cancel()
 
 		viewerID := uuid.NewString()
-		slog.Info("video viewer connected", "device", serial, "viewer_id", viewerID)
+		slog.Info("audio viewer connected", "device", serial, "viewer_id", viewerID)
 
-		if err := subscribeAndRelay(ctx, ws, hub, "video", viewerID, cfg); err != nil {
+		if err := subscribeAndRelay(ctx, ws, hub, "audio", viewerID, cfg); err != nil {
 			if ctx.Err() == nil {
-				slog.Info("video relay ended", "device", serial, "viewer_id", viewerID, "error", err)
+				slog.Info("audio relay ended", "device", serial, "viewer_id", viewerID, "error", err)
 			}
 		}
 	}

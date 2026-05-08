@@ -13,16 +13,40 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/pelni/adb-gateway/internal/adb"
+	"github.com/pelni/adb-gateway/internal/config"
 	"github.com/pelni/adb-gateway/internal/scrcpy"
 	"github.com/pelni/adb-gateway/internal/session"
 )
 
+// testConfig returns a Config with reasonable test defaults.
+func testConfig() *config.Config {
+	return &config.Config{
+		APIKeyPrimary:   "test-key",
+		APIKeySecondary: "secondary-key",
+		ListenAddr:      "127.0.0.1:0",
+		Stream: config.StreamConfig{
+			ViewerBufferFrames:  60,
+			MaxConsecutiveDrops: 120,
+			AudioEnabled:        true,
+		},
+		Control: config.ControlConfig{
+			LeaseTTLSeconds: 60,
+		},
+		WS: config.WSConfig{
+			PingIntervalSeconds: 25,
+			IdleTimeoutSeconds:  90,
+			ReadLimitBytes:      4194304,
+		},
+	}
+}
+
 // setupTestRouter creates a chi router with the device handlers for testing.
 func setupTestRouter(registry *session.Registry) *chi.Mux {
+	cfg := testConfig()
 	r := chi.NewRouter()
 	r.Get("/devices", ListDevices(registry))
 	r.Route("/devices/{serial}", func(r chi.Router) {
-		r.Post("/sessions", CreateSession(registry, nil, nil))
+		r.Post("/sessions", CreateSession(registry, nil, nil, cfg))
 		r.Delete("/sessions/{sessionID}", DeleteSession(registry))
 	})
 	return r

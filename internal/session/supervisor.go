@@ -397,6 +397,19 @@ func (s *DeviceSession) AudioCodec() scrcpy.AudioCodec {
 	return s.audioCodec
 }
 
+// NewActiveSessionForTest creates a DeviceSession in StateActive with the
+// given Hub already set. Used for WS handler integration tests that don't
+// need a full launcher + Run cycle.
+func NewActiveSessionForTest(serial string, videoHub *Hub) *DeviceSession {
+	return &DeviceSession{
+		ID:        "test-" + serial,
+		Serial:    serial,
+		state:     StateActive,
+		videoHub:  videoHub,
+		log:       slog.Default(),
+	}
+}
+
 // Existing Phase 1 accessors.
 
 func (s *DeviceSession) CodecMeta() [12]byte {

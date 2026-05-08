@@ -17,7 +17,11 @@ import (
 func NewRouter(cfg *config.Config, registry *session.Registry, adbClient *adb.Client, hostServices *adb.HostServices) http.Handler {
 	r := chi.NewRouter()
 
+	// Parse allowed origins from config.
+	origins := cfg.ParseAllowedOrigins()
+
 	// Global middleware stack (order matters)
+	r.Use(CORS(origins))
 	r.Use(middleware.RequestID)
 	r.Use(middleware.RealIP)
 	r.Use(middleware.Logger)
@@ -35,9 +39,14 @@ func NewRouter(cfg *config.Config, registry *session.Registry, adbClient *adb.Cl
 		r.Route("/devices", func(r chi.Router) {
 			r.Get("/", ListDevices(registry))
 			r.Route("/{serial}", func(r chi.Router) {
-				r.Post("/sessions", CreateSession(registry, adbClient, hostServices))
+				r.Post("/sessions", CreateSession(registry, adbClient, hostServices, cfg))
 				r.Delete("/sessions/{sessionID}", DeleteSession(registry))
-				r.Get("/video", StreamVideo(registry))
+				r.Get("/video", StreamVideo(registry, origins, cfg))
+				r.Get("/audio", StreamAudio(registry, origins, cfg))
+				r.Get("/control", StreamControl(registry, origins, cfg))
+				r.Post("/reservation", CreateReservation(registry))
+				r.Patch("/reservation", ExtendReservation(registry))
+				r.Delete("/reservation", ReleaseReservation(registry))
 			})
 		})
 	})

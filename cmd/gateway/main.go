@@ -18,6 +18,7 @@ import (
 	"github.com/pelni/adb-gateway/internal/obs"
 	"github.com/pelni/adb-gateway/internal/scrcpy"
 	"github.com/pelni/adb-gateway/internal/session"
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 // Build-time variables set via -ldflags.
@@ -56,6 +57,9 @@ func main() {
 	}
 
 	obs.InitLogger(cfg.LogLevel)
+
+	// Register Phase 2 Prometheus collectors before building the router.
+	obs.MustRegister(prometheus.DefaultRegisterer)
 
 	// Set build info for healthz and other endpoints
 	api.SetBuildInfo(buildVersion, buildSHA)
@@ -96,8 +100,10 @@ func main() {
 		slog.Warn("startup reconciliation failed", "error", err)
 	}
 
-	// Initialize device registry
-	registry := session.NewRegistry()
+	// Initialize device registry with lease TTL from config.
+	registry := session.NewRegistryWithOpts(session.RegistryOpts{
+		LeaseTTL: time.Duration(cfg.Control.LeaseTTLSeconds) * time.Second,
+	})
 
 	// Start device watcher to track connected/disconnected devices.
 	deviceEvents, err := hostServices.NewDeviceWatcher(ctx)

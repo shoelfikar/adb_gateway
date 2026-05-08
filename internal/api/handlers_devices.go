@@ -10,6 +10,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/pelni/adb-gateway/internal/adb"
+	"github.com/pelni/adb-gateway/internal/config"
 	"github.com/pelni/adb-gateway/internal/scrcpy"
 	"github.com/pelni/adb-gateway/internal/session"
 )
@@ -63,7 +64,7 @@ func ListDevices(registry *session.Registry) http.HandlerFunc {
 // The per-device mutex is released during the long-running Launch operation to
 // prevent blocking other requests for the same device. The entry state is set to
 // StateStarting before releasing the lock, so concurrent requests receive 409 Conflict.
-func CreateSession(registry *session.Registry, adbClient *adb.Client, hostServices *adb.HostServices) http.HandlerFunc {
+func CreateSession(registry *session.Registry, adbClient *adb.Client, hostServices *adb.HostServices, cfg *config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		serial := chi.URLParam(r, "serial")
 		if serial == "" {
@@ -116,7 +117,11 @@ func CreateSession(registry *session.Registry, adbClient *adb.Client, hostServic
 		// Create launcher and session. The launcher is stateless and safe to
 		// create per request; it delegates to adbClient and hostServices.
 		launcher := scrcpy.NewLauncher(adbClient, hostServices)
-		sess := session.NewDeviceSession(serial, adbClient, launcher, session.DefaultSessionOpts())
+		sess := session.NewDeviceSession(serial, adbClient, launcher, session.SessionOpts{
+		BufFrames:      cfg.Stream.ViewerBufferFrames,
+		MaxConsecDrops: cfg.Stream.MaxConsecutiveDrops,
+		AudioEnabled:   cfg.Stream.AudioEnabled,
+	})
 
 		if err := sess.Start(launchCtx); err != nil {
 			entry.Lock()

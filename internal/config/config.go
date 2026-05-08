@@ -44,9 +44,27 @@ type Config struct {
 	APIKeyPrimary   string `koanf:"api_key_primary"`
 	APIKeySecondary string `koanf:"api_key_secondary"`
 	LogLevel        string `koanf:"log_level"`
+	AllowedOrigins  string `koanf:"allowed_origins"`
 	Stream          StreamConfig  `koanf:"stream"`
 	Control         ControlConfig `koanf:"control"`
 	WS              WSConfig      `koanf:"ws"`
+}
+
+// ParseAllowedOrigins splits the comma-separated allowed_origins config value
+// into a slice. Returns an empty slice (allow all) if not set.
+func (c *Config) ParseAllowedOrigins() []string {
+	if c.AllowedOrigins == "" {
+		return nil
+	}
+	parts := strings.Split(c.AllowedOrigins, ",")
+	result := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			result = append(result, p)
+		}
+	}
+	return result
 }
 
 // Load reads configuration from file, environment, and CLI flags (in priority order).
