@@ -3,19 +3,19 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-last_updated: "2026-05-08T03:00:00Z"
+last_updated: "2026-05-08T03:19:40Z"
 progress:
   total_phases: 4
   completed_phases: 0
   total_plans: 14
-  completed_plans: 9
+  completed_plans: 10
 ---
 
 # Project State: ADB Gateway
 
 **Initialized:** 2026-05-06
 **Mode:** YOLO, sequential, standard granularity
-**Last updated:** 2026-05-08 (Phase 2 executing, Wave 1 complete)
+**Last updated:** 2026-05-08 (Phase 2 executing, Wave 1 + 02-03 complete)
 
 ## Project Reference
 
@@ -30,12 +30,12 @@ progress:
 | Phase | 2 — Multi-Client + Control |
 | Plan | 6 plans (02-01 through 02-06) |
 | Status | executing |
-| Phase progress | 2/6 plans complete (02-01, 02-02 done) |
+| Phase progress | 3/6 plans complete (02-01, 02-02, 02-03 done) |
 | Overall progress | 0/4 phases complete |
 
 ```
 [██████████] 100%  Phase 1 (7/7 plans complete)
-[████░░░░░░] 33%  Phase 2 (2/6 plans complete, Wave 1 done)
+[█████░░░░░] 50%  Phase 2 (3/6 plans complete)
 [░░░░░░░░░░] 0%   Phase 3
 [░░░░░░░░░░] 0%   Phase 4
 ```
@@ -45,7 +45,7 @@ progress:
 | Metric | Value |
 |--------|-------|
 | Phases completed | 0 |
-| Plans completed | 8 (01-01..01-07, 02-01) |
+| Plans completed | 9 (01-01..01-07, 02-01..02-03) |
 | Requirements shipped | 0 / 68 |
 | Validated requirements | 0 |
 | Decisions logged | 8 (in PROJECT.md Key Decisions, all `— Pending`) |
@@ -84,6 +84,9 @@ progress:
 28. **Hub unsubscribe is map-removal only** — unsubscribe does NOT close viewer.send channel; only evict() and shutdown() (both Hub-goroutine-only) close channels. This eliminates the data race between concurrent close/send that the original plan's recover-based approach would cause.
 29. **Hub fan-out uses single-goroutine pattern** — the Hub goroutine owns the viewers map for writes and iterates a snapshot under RLock for sends. No per-viewer goroutines; each viewer gets a buffered chan []byte read by the WS handler goroutine.
 30. **Drop counter resets on every successful send** — consecutive drops (not cumulative) trigger eviction at threshold 120. A viewer that catches up after 119 drops gets a clean slate.
+31. **Touch event is 32 bytes in scrcpy v3.3.4** — verified in byte-exact unit tests; 1+1+8+4+4+2+2+2+4+4 layout, NOT 36 as older sources cite. Flag if UAT against a real device rejects the byte stream.
+32. **ControlWriter.Run logs marshal errors but does NOT abort** — bad messages are dropped with a warning; only conn.Write errors terminate the writer (T-02-03-04).
+33. **ControlWriter does NOT own net.Conn lifecycle** — the supervisor (plan 02-05) creates and closes the conn; ControlWriter just writes to it.
 
 ### Key Research Findings (Phase 1)
 
@@ -109,9 +112,9 @@ progress:
 
 ## Session Continuity
 
-**Last action:** Plan 02-02 executed — Hub fan-out with late-joiner cache and slow-consumer eviction (8 tests passing with race detector).
+**Last action:** Plan 02-03 executed — scrcpy v3.3.4 control message marshal table (18 types, byte-exact) and single-writer ControlWriter goroutine (12 tests passing with race detector).
 
-**Next action:** Plan 02-03 (scrcpy audio reader + control writer binary protocol).
+**Next action:** Plan 02-04 (audio reader + device message reader).
 
 **Files of record:**
 
@@ -123,6 +126,7 @@ progress:
 - `.planning/phases/02-multi-client-control/02-PATTERNS.md` — Phase 2 pattern mapping
 - `.planning/phases/02-multi-client-control/02-01-SUMMARY.md` — Phase 2 foundation (config, errors, metrics)
 - `.planning/phases/02-multi-client-control/02-02-SUMMARY.md` — Hub fan-out with late-joiner cache
+- `.planning/phases/02-multi-client-control/02-03-SUMMARY.md` — scrcpy control writer marshal table
 
 ---
 *State updated: 2026-05-08 by plan 02-02 execution*

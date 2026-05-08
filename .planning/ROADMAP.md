@@ -144,7 +144,7 @@ Plans:
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Single-Device Streaming Foundation | 8 | complete | 01-01, 01-02, 01-03, 01-04, 01-05, 01-06, 01-07, 01-08 |
-| 2. Multi-Client + Control | 0/0 | not started | -- |
+| 2. Multi-Client + Control | 3/6 | in progress | 01-01..01-08, 02-01, 02-02, 02-03 |
 | 3. Multi-Device Fleet | 0/0 | not started | -- |
 | 4. Horizontal Scaling | 0/0 | not started | -- |
 
