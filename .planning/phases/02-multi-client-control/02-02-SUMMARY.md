@@ -96,6 +96,14 @@ Each task was committed atomically (TDD cycle):
 - **Verification:** TestHubSlowDisconnect passes with race detector
 - **Committed in:** 9daabd2
 
+**4. [Rule 1 - Bug] TestHubSlowDisconnect and TestHubDropCounterResets still flaked with production thresholds**
+- **Found during:** Post-execution test suite run — TestHubSlowDisconnect failed again (viewer not evicted after 250 frames)
+- **Issue:** Production thresholds (BufFrames=60, MaxConsecutiveDrops=120) require too many frames to flow through the 16-capacity input channel. Periodic yields (20ms every 50 frames) weren't sufficient for the Hub goroutine to accumulate 120 consecutive viewer-side drops.
+- **Fix:** Switched both tests to use small test-specific thresholds instead of production values: TestHubSlowDisconnect uses BufFrames=3/MaxConsecutiveDrops=5 (needs ~7 frames), TestHubDropCounterResets uses BufFrames=10/MaxConsecutiveDrops=20. The eviction logic under test is identical regardless of threshold values. Also fixed `err != err` typo in goroutine log condition.
+- **Files modified:** `internal/session/hub_test.go`
+- **Verification:** All 8 Hub tests pass with `-race` flag
+- **Committed in:** 7978e3a
+
 ---
 
 **Total deviations:** 3 auto-fixed (3 bugs)
