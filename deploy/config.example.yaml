@@ -10,3 +10,21 @@ log_level: "info"
 # Secondary key is optional and enables zero-downtime key rotation.
 # api_key_primary: set via env ADB_GW_API_KEY_PRIMARY (required)
 # api_key_secondary: set via env ADB_GW_API_KEY_SECONDARY (optional, for key rotation)
+
+# --- Phase 2: Multi-Client + Control ---
+
+# Streaming fan-out controls (per Hub).
+stream:
+  audio_enabled: true            # global kill-switch for audio capture (D-11)
+  viewer_buffer_frames: 60       # per-viewer send-channel capacity (~1s @ 60fps) (D-04)
+  max_consecutive_drops: 120     # disconnect viewer after N consecutive drops with WS close 1008 (D-05)
+
+# Reservation lease for control input.
+control:
+  lease_ttl_seconds: 60          # default lease TTL; PATCH resets to full 60s (D-08)
+
+# WebSocket lifecycle controls (apply to /video, /audio, /control).
+ws:
+  ping_interval_seconds: 25      # app-layer ping interval (D-16)
+  idle_timeout_seconds: 90       # disconnect after this many seconds of no pong (D-16)
+  read_limit_bytes: 4194304      # SetReadLimit; covers 262KiB SET_CLIPBOARD with margin (D-17, STR-09)
