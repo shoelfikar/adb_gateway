@@ -22,7 +22,7 @@ Four phases stay within the `standard` band and each has a verifiable end-state.
 ## Phases
 
 - [x] **Phase 1: Single-Device Streaming Foundation** — One device, one viewer, video frames flowing through WebSocket end-to-end. Locks the ADB foundation, scrcpy version contract, and auth scaffolding for all later phases.
-- [ ] **Phase 2: Multi-Client + Control** — 1 controller + N observers per device, with audio, control input, reservation leases, and baseline metrics.
+- [x] **Phase 2: Multi-Client + Control** — 1 controller + N observers per device, with audio, control input, reservation leases, and baseline metrics.
 - [ ] **Phase 3: Multi-Device Fleet** — 20-30 concurrent devices on one host with health-driven auto-recovery, ADB-shell features (logcat, screenshot, APK, file push/pull, recording), and per-device performance metrics.
 - [ ] **Phase 4: Horizontal Scaling** — N instances behind a load balancer, Redis-backed device registry, cross-node session handoff, recording retention, and production-grade observability.
 
@@ -144,7 +144,7 @@ Plans:
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Single-Device Streaming Foundation | 8 | complete | 01-01, 01-02, 01-03, 01-04, 01-05, 01-06, 01-07, 01-08 |
-| 2. Multi-Client + Control | 3/6 | in progress | 01-01..01-08, 02-01, 02-02, 02-03 |
+| 2. Multi-Client + Control | 6 | complete | 02-01, 02-02, 02-03, 02-04, 02-05, 02-06 |
 | 3. Multi-Device Fleet | 0/0 | not started | -- |
 | 4. Horizontal Scaling | 0/0 | not started | -- |
 

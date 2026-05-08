@@ -3,25 +3,26 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-last_updated: "2026-05-08T03:19:40Z"
+last_updated: "2026-05-08T11:42:00.000Z"
 progress:
   total_phases: 4
-  completed_phases: 0
+  completed_phases: 2
   total_plans: 14
-  completed_plans: 10
+  completed_plans: 13
+  percent: 93
 ---
 
 # Project State: ADB Gateway
 
 **Initialized:** 2026-05-06
 **Mode:** YOLO, sequential, standard granularity
-**Last updated:** 2026-05-08 (Phase 2 executing, Wave 1 + 02-03 complete)
+**Last updated:** 2026-05-08 (Phase 2 complete — all 6 plans shipped)
 
 ## Project Reference
 
 **Core value:** Reliable, low-latency streaming and control of many physical Android devices, exposed as a clean API that `pelni_server` can embed without needing to understand ADB or scrcpy internals.
 
-**Current focus:** Phase 2 — Multi-Client + Control. 6 plans across 4 waves. Plans 02-01 through 02-04 complete, Wave 1 done.
+**Current focus:** Phase 2 — Multi-Client + Control — COMPLETE. All 6 plans shipped. Phase 3 (Multi-Device Fleet) next.
 
 ## Current Position
 
@@ -30,12 +31,12 @@ progress:
 | Phase | 2 — Multi-Client + Control |
 | Plan | 6 plans (02-01 through 02-06) |
 | Status | executing |
-| Phase progress | 4/6 plans complete (02-01, 02-02, 02-03, 02-04 done) |
-| Overall progress | 0/4 phases complete |
+| Phase progress | 6/6 plans complete (Phase 2 done!) |
+| Overall progress | 2/4 phases complete |
 
 ```
-[██████████] 100%  Phase 1 (7/7 plans complete)
-[██████░░░░] 67%  Phase 2 (4/6 plans complete)
+[██████████] 100%  Phase 1 (8/8 plans complete)
+[██████████] 100%  Phase 2 (6/6 plans complete)
 [░░░░░░░░░░] 0%   Phase 3
 [░░░░░░░░░░] 0%   Phase 4
 ```
@@ -44,8 +45,8 @@ progress:
 
 | Metric | Value |
 |--------|-------|
-| Phases completed | 0 |
-| Plans completed | 10 (01-01..01-07, 02-01..02-04) |
+| Phases completed | 2 |
+| Plans completed | 13 (01-01..01-08, 02-01..02-05, 02-06) |
 | Requirements shipped | 0 / 68 |
 | Validated requirements | 0 |
 | Decisions logged | 8 (in PROJECT.md Key Decisions, all `— Pending`) |
@@ -91,6 +92,18 @@ progress:
 35. **Per-lease buffered(1) release channel** — closed after send, never reused; stale lease ID lookups return nil channel.
 36. **Grace period reuses expireFromTimer** — no distinction between TTL and grace timer since both check current lease ID before releasing.
 37. **ctEqual uses subtle.ConstantTimeCompare on UUID strings** — length leak is acceptable since UUID v4 is always 36 chars.
+38. **WS /video refactored from Phase 1 direct-relay to Hub.Subscribe fan-out** — all Phase 1 tests updated.
+39. **StreamAudio returns 404 AUDIO_UNAVAILABLE before WS upgrade when AudioAvailable=false** (D-12).
+40. **StreamControl requires X-Lease-ID header before WS upgrade; re-checks lease per-message** (D-14, D-15).
+41. **decodeControlEnvelope dispatches all 18 scrcpy control types; unknown types return UNKNOWN_CONTROL_TYPE text frame without closing WS.**
+42. **ownerKeyFromRequest uses SHA-256 hex of API key for lease binding** (D-19).
+43. **DELETE /reservation accepts both JSON body and X-Lease-ID header for lease ID.**
+44. **Control WS disconnect calls mgr.BeginGrace(leaseID) for 5s grace period** (D-10).
+45. **Force-release events delivered as JSON text frame + StatusNormalClosure close** (D-09).
+46. **buildAcceptOptions extracted from ws_video.go to ws_helpers.go for reuse by /audio and /control.**
+47. **NewActiveSessionForTest provides test affordance for Hub-based WS handler integration tests.**
+48. **CORS middleware added to router stack** (from 02-01 cors.go).
+49. **1000-cycle soak test uses //go:build soak tag; goroutine delta = 0 from baseline.**
 
 ### Key Research Findings (Phase 1)
 
@@ -116,9 +129,9 @@ progress:
 
 ## Session Continuity
 
-**Last action:** Plan 02-04 executed — LeaseManager reservation lease state machine with TTL expiry, 5s grace, force-release, and constant-time UUID compare (12 tests passing under -race).
+**Last action:** Plan 02-06 executed — WS audio/control endpoints, reservation REST handlers, router wiring, metrics registration, 1000-cycle soak test (all tests passing under -race).
 
-**Next action:** Plan 02-05 (audio reader + device message reader).
+**Next action:** Phase 3 planning (/gsd-plan-phase 3)
 
 **Files of record:**
 
@@ -132,6 +145,8 @@ progress:
 - `.planning/phases/02-multi-client-control/02-02-SUMMARY.md` — Hub fan-out with late-joiner cache
 - `.planning/phases/02-multi-client-control/02-03-SUMMARY.md` — scrcpy control writer marshal table
 - `.planning/phases/02-multi-client-control/02-04-SUMMARY.md` — reservation lease state machine
+- `.planning/phases/02-multi-client-control/02-05-SUMMARY.md` — audio reader, device message reader, session lifecycle wiring
+- `.planning/phases/02-multi-client-control/02-06-SUMMARY.md` — API wiring + soak test
 
 ---
-*State updated: 2026-05-08 by plan 02-02 execution*
+*State updated: 2026-05-08 by plan 02-06 execution*

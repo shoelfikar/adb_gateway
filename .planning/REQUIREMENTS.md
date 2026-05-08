@@ -40,30 +40,30 @@ Requirements for initial release. Each maps to exactly one roadmap phase.
 - [ ] **SCR-01**: Service vendors a single pinned `server.jar` version, embedded via `//go:embed`; version constant exposed at runtime
 - [ ] **SCR-02**: On session start, service pushes `server.jar`, sets up reverse tunnels for video/audio/control, then launches `app_process` with the pinned scrcpy version arg and an SCID
 - [ ] **SCR-03**: Service reads scrcpy's video stream (codec meta + 12-byte frame header + payload) using `io.ReadFull` to preserve frame boundaries — server NEVER decodes frames
-- [ ] **SCR-04**: Service reads scrcpy's audio stream (when enabled) using the same framing discipline; audio is opt-in in Phase 1, default-on Phase 2+
-- [ ] **SCR-05**: Service writes scrcpy's binary control protocol (touch, key, text, scroll, etc.) to the control socket from a single-writer goroutine per device
-- [ ] **SCR-06**: Service reads scrcpy's device-message stream (clipboard, ACKs) and exposes events via control WS or metrics
+- [x] **SCR-04**: Service reads scrcpy's audio stream (when enabled) using the same framing discipline; audio is opt-in in Phase 1, default-on Phase 2+
+- [x] **SCR-05**: Service writes scrcpy's binary control protocol (touch, key, text, scroll, etc.) to the control socket from a single-writer goroutine per device
+- [x] **SCR-06**: Service reads scrcpy's device-message stream (clipboard, ACKs) and exposes events via control WS or metrics
 - [ ] **SCR-07**: Session config exposes scrcpy parameters: codec, max_size, bit_rate, max_fps, audio_codec, audio_source
 
 ### Streaming API
 
 - [ ] **STR-01**: WebSocket `GET /devices/{serial}/video` streams H.264/H.265 frames (binary messages), with codec metadata sent on first frame
-- [ ] **STR-02**: WebSocket `GET /devices/{serial}/audio` streams OPUS/AAC frames (binary)
-- [ ] **STR-03**: WebSocket `GET /devices/{serial}/control` accepts client→server control messages (binary, scrcpy format)
-- [ ] **STR-04**: Multiple read-only viewers can attach to the same device's video/audio simultaneously (1 controller + N observers)
-- [ ] **STR-05**: Per-client send buffer is bounded; on slow client, frames are dropped (counter incremented), not buffered indefinitely
-- [ ] **STR-06**: After N consecutive drops, slow client is disconnected with a structured close code
-- [ ] **STR-07**: Late-joining viewer receives the cached codec metadata + most recent keyframe before live frames, so a fresh decoder can start
-- [ ] **STR-08**: Service sends app-layer pings every 20–30s on every WS connection; idle-disconnect after configurable timeout
-- [ ] **STR-09**: WS `SetReadLimit` is configured to ≥4 MiB to accommodate scrcpy frame sizes
+- [x] **STR-02**: WebSocket `GET /devices/{serial}/audio` streams OPUS/AAC frames (binary)
+- [x] **STR-03**: WebSocket `GET /devices/{serial}/control` accepts client→server control messages (binary, scrcpy format)
+- [x] **STR-04**: Multiple read-only viewers can attach to the same device's video/audio simultaneously (1 controller + N observers)
+- [x] **STR-05**: Per-client send buffer is bounded; on slow client, frames are dropped (counter incremented), not buffered indefinitely
+- [x] **STR-06**: After N consecutive drops, slow client is disconnected with a structured close code
+- [x] **STR-07**: Late-joining viewer receives the cached codec metadata + most recent keyframe before live frames, so a fresh decoder can start
+- [x] **STR-08**: Service sends app-layer pings every 20–30s on every WS connection; idle-disconnect after configurable timeout
+- [x] **STR-09**: WS `SetReadLimit` is configured to ≥4 MiB to accommodate scrcpy frame sizes
 
 ### Control & Reservation
 
-- [ ] **CTL-01**: Only one client at a time may hold the controller role on a device; others are observers
-- [ ] **CTL-02**: REST `POST /devices/{serial}/reservation` acquires a TTL lease (default 60s); REST `DELETE` releases; `PATCH` extends
-- [ ] **CTL-03**: Reservation must be held for control input to be accepted on the control WS (controller role is gated by lease)
-- [ ] **CTL-04**: Reservation auto-releases when its TTL expires; observers may then claim
-- [ ] **CTL-05**: Forced release (admin endpoint or device disappearance) emits an event the lease holder can observe
+- [x] **CTL-01**: Only one client at a time may hold the controller role on a device; others are observers
+- [x] **CTL-02**: REST `POST /devices/{serial}/reservation` acquires a TTL lease (default 60s); REST `DELETE` releases; `PATCH` extends
+- [x] **CTL-03**: Reservation must be held for control input to be accepted on the control WS (controller role is gated by lease)
+- [x] **CTL-04**: Reservation auto-releases when its TTL expires; observers may then claim
+- [x] **CTL-05**: Forced release (admin endpoint or device disappearance) emits an event the lease holder can observe
 
 ### Auth
 
@@ -88,7 +88,7 @@ Requirements for initial release. Each maps to exactly one roadmap phase.
 
 ### Observability
 
-- [ ] **OBS-01**: Service exposes `GET /metrics` in Prometheus format
+- [x] **OBS-01**: Service exposes `GET /metrics` in Prometheus format
 - [ ] **OBS-02**: Metrics cover: device count by status, session count by state, frames/sec per device, drop counter per client, ADB call latency, reverse-tunnel reconcile counter
 - [ ] **OBS-03**: Logs include device serial + session ID as structured fields on every relevant entry
 - [ ] **OBS-04**: A startup log line records pinned scrcpy version, build SHA, and effective config (with secrets redacted)
@@ -174,26 +174,26 @@ Each v1 requirement is mapped to exactly one phase. See `.planning/ROADMAP.md` f
 | SCR-01 | Phase 1 | Pending |
 | SCR-02 | Phase 1 | Pending |
 | SCR-03 | Phase 1 | Pending |
-| SCR-04 | Phase 2 | Pending |
-| SCR-05 | Phase 2 | Pending |
-| SCR-06 | Phase 2 | Pending |
+| SCR-04 | Phase 2 | Shipped (02-05) |
+| SCR-05 | Phase 2 | Shipped (02-03) |
+| SCR-06 | Phase 2 | Shipped (02-05) |
 | SCR-07 | Phase 3 | Pending |
 | **_Streaming API_** | | |
 | STR-01 | Phase 1 | Pending |
-| STR-02 | Phase 2 | Pending |
-| STR-03 | Phase 2 | Pending |
-| STR-04 | Phase 2 | Pending |
-| STR-05 | Phase 2 | Pending |
-| STR-06 | Phase 2 | Pending |
-| STR-07 | Phase 2 | Pending |
-| STR-08 | Phase 2 | Pending |
-| STR-09 | Phase 2 | Pending |
+| STR-02 | Phase 2 | Shipped (02-06) |
+| STR-03 | Phase 2 | Shipped (02-06) |
+| STR-04 | Phase 2 | Shipped (02-02) |
+| STR-05 | Phase 2 | Shipped (02-02) |
+| STR-06 | Phase 2 | Shipped (02-02) |
+| STR-07 | Phase 2 | Shipped (02-02) |
+| STR-08 | Phase 2 | Shipped (02-06) |
+| STR-09 | Phase 2 | Shipped (02-06) |
 | **_Control & Reservation_** | | |
-| CTL-01 | Phase 2 | Pending |
-| CTL-02 | Phase 2 | Pending |
-| CTL-03 | Phase 2 | Pending |
-| CTL-04 | Phase 2 | Pending |
-| CTL-05 | Phase 2 | Pending |
+| CTL-01 | Phase 2 | Shipped (02-04) |
+| CTL-02 | Phase 2 | Shipped (02-06) |
+| CTL-03 | Phase 2 | Shipped (02-06) |
+| CTL-04 | Phase 2 | Shipped (02-04) |
+| CTL-05 | Phase 2 | Shipped (02-04) |
 | **_Auth_** | | |
 | AUTH-01 | Phase 1 | Pending |
 | AUTH-02 | Phase 1 | Pending |
@@ -212,7 +212,7 @@ Each v1 requirement is mapped to exactly one phase. See `.planning/ROADMAP.md` f
 | OPS-09 | Phase 3 | Pending |
 | OPS-10 | Phase 3 | Pending |
 | **_Observability_** | | |
-| OBS-01 | Phase 2 | Pending |
+| OBS-01 | Phase 2 | Shipped (02-06) |
 | OBS-02 | Phase 2 | Pending |
 | OBS-03 | Phase 1 | Pending |
 | OBS-04 | Phase 1 | Pending |
@@ -239,4 +239,4 @@ Each v1 requirement is mapped to exactly one phase. See `.planning/ROADMAP.md` f
 
 ---
 *Requirements defined: 2026-05-06*
-*Last updated: 2026-05-06 — traceability populated by `/gsd-roadmap` (4 phases, 68/68 mapped)*
+*Last updated: 2026-05-08 — Phase 2 complete: SCR-04..06, STR-02..09, CTL-01..05, OBS-01 shipped*
