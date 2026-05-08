@@ -21,7 +21,7 @@ progress:
 
 **Core value:** Reliable, low-latency streaming and control of many physical Android devices, exposed as a clean API that `pelni_server` can embed without needing to understand ADB or scrcpy internals.
 
-**Current focus:** Phase 2 — Multi-Client + Control. 6 plans across 4 waves. Plans 02-01 and 02-02 complete, Wave 1 done.
+**Current focus:** Phase 2 — Multi-Client + Control. 6 plans across 4 waves. Plans 02-01 through 02-04 complete, Wave 1 done.
 
 ## Current Position
 
@@ -30,12 +30,12 @@ progress:
 | Phase | 2 — Multi-Client + Control |
 | Plan | 6 plans (02-01 through 02-06) |
 | Status | executing |
-| Phase progress | 3/6 plans complete (02-01, 02-02, 02-03 done) |
+| Phase progress | 4/6 plans complete (02-01, 02-02, 02-03, 02-04 done) |
 | Overall progress | 0/4 phases complete |
 
 ```
 [██████████] 100%  Phase 1 (7/7 plans complete)
-[█████░░░░░] 50%  Phase 2 (3/6 plans complete)
+[██████░░░░] 67%  Phase 2 (4/6 plans complete)
 [░░░░░░░░░░] 0%   Phase 3
 [░░░░░░░░░░] 0%   Phase 4
 ```
@@ -45,7 +45,7 @@ progress:
 | Metric | Value |
 |--------|-------|
 | Phases completed | 0 |
-| Plans completed | 9 (01-01..01-07, 02-01..02-03) |
+| Plans completed | 10 (01-01..01-07, 02-01..02-04) |
 | Requirements shipped | 0 / 68 |
 | Validated requirements | 0 |
 | Decisions logged | 8 (in PROJECT.md Key Decisions, all `— Pending`) |
@@ -87,6 +87,10 @@ progress:
 31. **Touch event is 32 bytes in scrcpy v3.3.4** — verified in byte-exact unit tests; 1+1+8+4+4+2+2+2+4+4 layout, NOT 36 as older sources cite. Flag if UAT against a real device rejects the byte stream.
 32. **ControlWriter.Run logs marshal errors but does NOT abort** — bad messages are dropped with a warning; only conn.Write errors terminate the writer (T-02-03-04).
 33. **ControlWriter does NOT own net.Conn lifecycle** — the supervisor (plan 02-05) creates and closes the conn; ControlWriter just writes to it.
+34. **LeaseManager mutex is independent of DeviceEntry.mu** — caller must not hold DeviceEntry.mu when calling LeaseManager methods; avoids lock-order deadlock.
+35. **Per-lease buffered(1) release channel** — closed after send, never reused; stale lease ID lookups return nil channel.
+36. **Grace period reuses expireFromTimer** — no distinction between TTL and grace timer since both check current lease ID before releasing.
+37. **ctEqual uses subtle.ConstantTimeCompare on UUID strings** — length leak is acceptable since UUID v4 is always 36 chars.
 
 ### Key Research Findings (Phase 1)
 
@@ -112,9 +116,9 @@ progress:
 
 ## Session Continuity
 
-**Last action:** Plan 02-03 executed — scrcpy v3.3.4 control message marshal table (18 types, byte-exact) and single-writer ControlWriter goroutine (12 tests passing with race detector).
+**Last action:** Plan 02-04 executed — LeaseManager reservation lease state machine with TTL expiry, 5s grace, force-release, and constant-time UUID compare (12 tests passing under -race).
 
-**Next action:** Plan 02-04 (audio reader + device message reader).
+**Next action:** Plan 02-05 (audio reader + device message reader).
 
 **Files of record:**
 
@@ -127,6 +131,7 @@ progress:
 - `.planning/phases/02-multi-client-control/02-01-SUMMARY.md` — Phase 2 foundation (config, errors, metrics)
 - `.planning/phases/02-multi-client-control/02-02-SUMMARY.md` — Hub fan-out with late-joiner cache
 - `.planning/phases/02-multi-client-control/02-03-SUMMARY.md` — scrcpy control writer marshal table
+- `.planning/phases/02-multi-client-control/02-04-SUMMARY.md` — reservation lease state machine
 
 ---
 *State updated: 2026-05-08 by plan 02-02 execution*
