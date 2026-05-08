@@ -5,6 +5,7 @@ import (
 	"context"
 	"log/slog"
 	"sync"
+	"time"
 
 	"github.com/pelni/adb-gateway/internal/adb"
 )
@@ -13,10 +14,12 @@ import (
 // Each entry has its own mutex (ADB-07: per-device, never global)
 // to prevent one hung device from blocking operations on others.
 type DeviceEntry struct {
-	Serial  string
-	State   SessionState
-	Session *DeviceSession // nil when no active session; defined in supervisor.go
-	mu      sync.Mutex
+	Serial         string
+	State          SessionState
+	Session        *DeviceSession // nil when no active session; defined in supervisor.go
+	LeaseManager   *LeaseManager  // per-device lease manager (plan 02-04, wired in 02-05)
+	AudioAvailable bool            // set by launcher probe (plan 02-05 D-12)
+	mu             sync.Mutex
 }
 
 // Lock acquires the per-device mutex. Used by external packages (e.g., api handlers)
@@ -54,16 +57,49 @@ func (e *DeviceEntry) SetSession(s *DeviceSession) {
 	e.mu.Unlock()
 }
 
+// GetLeaseManager returns the device's lease manager (allocated lazily on first GetOrCreate).
+func (e *DeviceEntry) GetLeaseManager() *LeaseManager {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.LeaseManager
+}
+
+// GetAudioAvailable returns whether audio is available for this device. Thread-safe.
+func (e *DeviceEntry) GetAudioAvailable() bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.AudioAvailable
+}
+
+// SetAudioAvailable sets whether audio is available for this device. Thread-safe.
+func (e *DeviceEntry) SetAudioAvailable(v bool) {
+	e.mu.Lock()
+	e.AudioAvailable = v
+	e.mu.Unlock()
+}
+
+// RegistryOpts configures Registry creation.
+type RegistryOpts struct {
+	LeaseTTL time.Duration // = cfg.Control.LeaseTTLSeconds * time.Second
+}
+
 // Registry tracks connected devices using a thread-safe sync.Map.
 // Devices are keyed by serial string. The registry is fed by
 // host:track-devices events and updated in real time.
 type Registry struct {
-	devices sync.Map // serial string -> *DeviceEntry
+	devices  sync.Map        // serial string -> *DeviceEntry
+	leaseTTL time.Duration
 }
 
-// NewRegistry creates an empty device registry.
+// NewRegistry creates an empty device registry with default lease TTL (60s).
+// Use NewRegistryWithOpts for explicit TTL.
 func NewRegistry() *Registry {
-	return &Registry{}
+	return NewRegistryWithOpts(RegistryOpts{LeaseTTL: 60 * time.Second})
+}
+
+// NewRegistryWithOpts creates a registry with explicit configuration.
+func NewRegistryWithOpts(opts RegistryOpts) *Registry {
+	return &Registry{leaseTTL: opts.LeaseTTL}
 }
 
 // GetOrCreate returns the existing DeviceEntry for the given serial,
@@ -71,8 +107,9 @@ func NewRegistry() *Registry {
 // Uses sync.Map.LoadOrStore for thread-safe idempotent creation.
 func (r *Registry) GetOrCreate(serial string) *DeviceEntry {
 	newEntry := &DeviceEntry{
-		Serial: serial,
-		State:  StateIdle,
+		Serial:       serial,
+		State:        StateIdle,
+		LeaseManager: NewLeaseManager(r.leaseTTL, slog.With("device", serial)),
 	}
 	actual, _ := r.devices.LoadOrStore(serial, newEntry)
 	return actual.(*DeviceEntry)

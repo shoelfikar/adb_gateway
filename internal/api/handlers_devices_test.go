@@ -36,7 +36,7 @@ type mockLauncherForAPI struct {
 	calls  int
 }
 
-func (m *mockLauncherForAPI) Launch(ctx context.Context, serial string) (*scrcpy.LaunchResult, error) {
+func (m *mockLauncherForAPI) LaunchWithOptions(ctx context.Context, serial string, opts scrcpy.LaunchOptions) (*scrcpy.LaunchResult, error) {
 	m.calls++
 	if m.err != nil {
 		return nil, m.err
@@ -228,7 +228,7 @@ func TestCreateSessionIdempotent(t *testing.T) {
 	result.VideoConn = client
 
 	launcher := &mockLauncherForAPI{result: result}
-	sess := session.NewDeviceSession("ABC123", nil, launcher)
+	sess := session.NewDeviceSession("ABC123", nil, launcher, session.DefaultSessionOpts())
 	err := sess.Start(context.Background())
 	require.NoError(t, err)
 
@@ -266,7 +266,7 @@ func TestDeleteSessionSuccess(t *testing.T) {
 	result.VideoConn = client
 
 	launcher := &mockLauncherForAPI{result: result}
-	sess := session.NewDeviceSession("ABC123", nil, launcher)
+	sess := session.NewDeviceSession("ABC123", nil, launcher, session.DefaultSessionOpts())
 	err := sess.Start(context.Background())
 	require.NoError(t, err)
 
@@ -300,7 +300,7 @@ func TestDeleteSessionIDMismatch(t *testing.T) {
 	result.VideoConn = client
 
 	launcher := &mockLauncherForAPI{result: result}
-	sess := session.NewDeviceSession("ABC123", nil, launcher)
+	sess := session.NewDeviceSession("ABC123", nil, launcher, session.DefaultSessionOpts())
 	err := sess.Start(context.Background())
 	require.NoError(t, err)
 
@@ -361,7 +361,7 @@ func TestCreateSessionActiveConflict(t *testing.T) {
 	result.VideoConn = client
 
 	launcher := &mockLauncherForAPI{result: result}
-	sess := session.NewDeviceSession("ABC123", nil, launcher)
+	sess := session.NewDeviceSession("ABC123", nil, launcher, session.DefaultSessionOpts())
 	err := sess.Start(context.Background())
 	require.NoError(t, err)
 

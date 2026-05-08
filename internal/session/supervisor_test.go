@@ -14,7 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// mockLauncher implements scrcpy.Launcher for testing.
+// mockLauncher implements Launcher for testing (uses LaunchWithOptions).
 type mockLauncher struct {
 	result *scrcpy.LaunchResult
 	err    error
@@ -22,7 +22,7 @@ type mockLauncher struct {
 	calls  int
 }
 
-func (m *mockLauncher) Launch(ctx context.Context, serial string) (*scrcpy.LaunchResult, error) {
+func (m *mockLauncher) LaunchWithOptions(ctx context.Context, serial string, opts scrcpy.LaunchOptions) (*scrcpy.LaunchResult, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.calls++
@@ -67,7 +67,7 @@ func createMockLaunchResult() *scrcpy.LaunchResult {
 }
 
 func TestNewDeviceSession(t *testing.T) {
-	sess := NewDeviceSession("ABC123", nil, nil)
+	sess := NewDeviceSession("ABC123", nil, nil, DefaultSessionOpts())
 
 	// ID should be a valid UUID (not empty, proper format)
 	assert.NotEmpty(t, sess.ID)
@@ -90,7 +90,7 @@ func TestSessionStartSuccess(t *testing.T) {
 	result.VideoConn = client
 
 	launcher := &mockLauncher{result: result}
-	sess := NewDeviceSession("ABC123", nil, launcher)
+	sess := NewDeviceSession("ABC123", nil, launcher, DefaultSessionOpts())
 
 	ctx := context.Background()
 	err := sess.Start(ctx)
@@ -110,7 +110,7 @@ func TestSessionStartSuccess(t *testing.T) {
 func TestSessionStartFailure(t *testing.T) {
 	// Create a mock launcher that returns an error.
 	launcher := &mockLauncher{err: errors.New("push server.jar: connection refused")}
-	sess := NewDeviceSession("ABC123", nil, launcher)
+	sess := NewDeviceSession("ABC123", nil, launcher, DefaultSessionOpts())
 
 	ctx := context.Background()
 	err := sess.Start(ctx)
@@ -128,7 +128,7 @@ func TestSessionClose(t *testing.T) {
 	result.VideoConn = client
 
 	launcher := &mockLauncher{result: result}
-	sess := NewDeviceSession("ABC123", nil, launcher)
+	sess := NewDeviceSession("ABC123", nil, launcher, DefaultSessionOpts())
 
 	ctx := context.Background()
 	err := sess.Start(ctx)
@@ -145,7 +145,7 @@ func TestSessionClose(t *testing.T) {
 
 func TestSessionCloseFromIdle(t *testing.T) {
 	// Closing an idle session should fail (invalid transition).
-	sess := NewDeviceSession("ABC123", nil, nil)
+	sess := NewDeviceSession("ABC123", nil, nil, DefaultSessionOpts())
 	ctx := context.Background()
 
 	err := sess.Close(ctx)
@@ -167,7 +167,7 @@ func TestIdempotentSessionCreate(t *testing.T) {
 	entry := registry.GetOrCreate("ABC123")
 
 	// Create and start a session
-	sess := NewDeviceSession("ABC123", nil, launcher)
+	sess := NewDeviceSession("ABC123", nil, launcher, DefaultSessionOpts())
 	ctx := context.Background()
 	err := sess.Start(ctx)
 	require.NoError(t, err)
@@ -265,7 +265,7 @@ func TestSessionStateTransitions(t *testing.T) {
 }
 
 func TestDeviceSessionCodecMeta(t *testing.T) {
-	sess := NewDeviceSession("ABC123", nil, nil)
+	sess := NewDeviceSession("ABC123", nil, nil, DefaultSessionOpts())
 	// Before starting, codec meta should be zero value
 	assert.Equal(t, [12]byte{}, sess.CodecMeta())
 
@@ -276,7 +276,7 @@ func TestDeviceSessionCodecMeta(t *testing.T) {
 	result.VideoConn = client
 
 	launcher := &mockLauncher{result: result}
-	sess2 := NewDeviceSession("DEF456", nil, launcher)
+	sess2 := NewDeviceSession("DEF456", nil, launcher, DefaultSessionOpts())
 	ctx := context.Background()
 	err := sess2.Start(ctx)
 	require.NoError(t, err)
@@ -290,7 +290,7 @@ func TestDeviceSessionCodecMeta(t *testing.T) {
 
 func TestConcurrentSessionState(t *testing.T) {
 	// Verify that State() is thread-safe
-	sess := NewDeviceSession("ABC123", nil, nil)
+	sess := NewDeviceSession("ABC123", nil, nil, DefaultSessionOpts())
 	var wg sync.WaitGroup
 
 	for i := 0; i < 100; i++ {
@@ -306,28 +306,30 @@ func TestConcurrentSessionState(t *testing.T) {
 }
 
 func TestSessionRunContextCancellation(t *testing.T) {
-	// Test that Run exits when context is cancelled
+	// Test that Run exits when context is cancelled.
+	// The closer goroutine in Run calls cleanupResources which closes
+	// connections, unblocking reads. We close the server side to simulate
+	// this: when ctx is cancelled, cleanup closes the conn, ReadFull returns
+	// an error, and Run exits.
 	result := createMockLaunchResult()
 	srv, client := net.Pipe()
-	defer srv.Close()
 	result.VideoConn = client
 
 	launcher := &mockLauncher{result: result}
-	sess := NewDeviceSession("ABC123", nil, launcher)
+	sess := NewDeviceSession("ABC123", nil, launcher, DefaultSessionOpts())
 
 	ctx, cancel := context.WithCancel(context.Background())
 	err := sess.Start(ctx)
 	require.NoError(t, err)
 
-	// Cancel context after a short delay
+	// Cancel context and close the server end of the pipe to unblock reads.
 	go func() {
 		time.Sleep(50 * time.Millisecond)
+		srv.Close()  // Unblock ReadFull on the client side
 		cancel()
 	}()
 
-	// Run should exit when context is cancelled
+	// Run should exit when context is cancelled and connections are closed.
 	_ = sess.Run(ctx)
-
-	// No assertion on the error since context cancellation returns context.Canceled
 	client.Close()
 }

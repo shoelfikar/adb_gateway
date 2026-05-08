@@ -116,7 +116,7 @@ func CreateSession(registry *session.Registry, adbClient *adb.Client, hostServic
 		// Create launcher and session. The launcher is stateless and safe to
 		// create per request; it delegates to adbClient and hostServices.
 		launcher := scrcpy.NewLauncher(adbClient, hostServices)
-		sess := session.NewDeviceSession(serial, adbClient, launcher)
+		sess := session.NewDeviceSession(serial, adbClient, launcher, session.DefaultSessionOpts())
 
 		if err := sess.Start(launchCtx); err != nil {
 			entry.Lock()
