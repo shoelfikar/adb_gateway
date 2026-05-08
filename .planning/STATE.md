@@ -3,39 +3,39 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-last_updated: "2026-05-07T13:55:00Z"
+last_updated: "2026-05-08T03:00:00Z"
 progress:
   total_phases: 4
   completed_phases: 0
-  total_plans: 7
-  completed_plans: 0
+  total_plans: 14
+  completed_plans: 9
 ---
 
 # Project State: ADB Gateway
 
 **Initialized:** 2026-05-06
 **Mode:** YOLO, sequential, standard granularity
-**Last updated:** 2026-05-07 (Phase 1 executing, Plans 01-07 complete)
+**Last updated:** 2026-05-08 (Phase 2 executing, Wave 1 complete)
 
 ## Project Reference
 
 **Core value:** Reliable, low-latency streaming and control of many physical Android devices, exposed as a clean API that `pelni_server` can embed without needing to understand ADB or scrcpy internals.
 
-**Current focus:** Phase 1 — Single-Device Streaming Foundation. 6 plans across 5 waves. Research complete, plans verified, ready to execute.
+**Current focus:** Phase 2 — Multi-Client + Control. 6 plans across 4 waves. Plans 02-01 and 02-02 complete, Wave 1 done.
 
 ## Current Position
 
 | Field | Value |
 |-------|-------|
-| Phase | 1 — Single-Device Streaming Foundation |
-| Plan | 7 plans (01-01 through 01-07) |
+| Phase | 2 — Multi-Client + Control |
+| Plan | 6 plans (02-01 through 02-06) |
 | Status | executing |
-| Phase progress | 7/7 plans complete |
+| Phase progress | 2/6 plans complete (02-01, 02-02 done) |
 | Overall progress | 0/4 phases complete |
 
 ```
 [██████████] 100%  Phase 1 (7/7 plans complete)
-[░░░░░░░░░░] 0%   Phase 2
+[████░░░░░░] 33%  Phase 2 (2/6 plans complete, Wave 1 done)
 [░░░░░░░░░░] 0%   Phase 3
 [░░░░░░░░░░] 0%   Phase 4
 ```
@@ -45,7 +45,7 @@ progress:
 | Metric | Value |
 |--------|-------|
 | Phases completed | 0 |
-| Plans completed | 7 (01-01, 01-02, 01-03, 01-04, 01-05, 01-06, 01-07) |
+| Plans completed | 8 (01-01..01-07, 02-01) |
 | Requirements shipped | 0 / 68 |
 | Validated requirements | 0 |
 | Decisions logged | 8 (in PROJECT.md Key Decisions, all `— Pending`) |
@@ -81,6 +81,9 @@ progress:
 25. **MarkAllDisconnected removes idle entries** — StateIdle->StateFailed is not a valid FSM transition, so idle entries are deleted rather than transitioned. Active/starting/stopping entries transition to StateFailed and are kept for reverse forward re-issuance.
 26. **ActiveSessionSpecs captures specs from existing ReverseMapping** — avoids net.Addr format inconsistencies that arise from reconstructing specs from VideoLn.Addr().
 27. **Watchdog is a probe-only type** — ADBWatchdog.ProbeOnce is stateless; the caller (main.go lifecycle goroutine) manages reconnection orchestration and restarts the watchdog goroutine after reconnect.
+28. **Hub unsubscribe is map-removal only** — unsubscribe does NOT close viewer.send channel; only evict() and shutdown() (both Hub-goroutine-only) close channels. This eliminates the data race between concurrent close/send that the original plan's recover-based approach would cause.
+29. **Hub fan-out uses single-goroutine pattern** — the Hub goroutine owns the viewers map for writes and iterates a snapshot under RLock for sends. No per-viewer goroutines; each viewer gets a buffered chan []byte read by the WS handler goroutine.
+30. **Drop counter resets on every successful send** — consecutive drops (not cumulative) trigger eviction at threshold 120. A viewer that catches up after 119 drops gets a clean slate.
 
 ### Key Research Findings (Phase 1)
 
@@ -106,23 +109,20 @@ progress:
 
 ## Session Continuity
 
-**Last action:** Plan 01-07 executed — ADB reconnection gap closure (watchdog probes, MarkAllDisconnected, lifecycle loop, reverse forward re-issuance). Phase 1 fully complete (7/7 plans).
+**Last action:** Plan 02-02 executed — Hub fan-out with late-joiner cache and slow-consumer eviction (8 tests passing with race detector).
 
-**Next action:** Phase transition — review Phase 1 outcomes, prepare Phase 2 (Multi-Client Broadcast).
+**Next action:** Plan 02-03 (scrcpy audio reader + control writer binary protocol).
 
 **Files of record:**
 
 - `.planning/PROJECT.md` — vision, constraints, key decisions
 - `.planning/REQUIREMENTS.md` — 68 v1 requirements with traceability table
 - `.planning/ROADMAP.md` — 4 phases, success criteria, dependencies
-- `.planning/phases/01-single-device-streaming-foundation/01-CONTEXT.md` — Phase 1 implementation decisions
-- `.planning/phases/01-single-device-streaming-foundation/01-RESEARCH.md` — Phase 1 technical research (HIGH confidence)
-- `.planning/phases/01-single-device-streaming-foundation/01-PATTERNS.md` — Phase 1 pattern mapping
-- `.planning/phases/01-single-device-streaming-foundation/01-VALIDATION.md` — Phase 1 validation strategy
-- `.planning/phases/01-single-device-streaming-foundation/01-01-PLAN.md` through `01-06-PLAN.md` — 6 execution plans
-- `.planning/research/SUMMARY.md` — research synthesis (HIGH confidence)
-- `.planning/research/{STACK,FEATURES,ARCHITECTURE,PITFALLS}.md` — domain research artifacts
-- `android-monitoring-architecture.md` — original architecture sketch (still consistent with researched plan)
+- `.planning/phases/02-multi-client-control/02-CONTEXT.md` — Phase 2 implementation decisions
+- `.planning/phases/02-multi-client-control/02-RESEARCH.md` — Phase 2 technical research (HIGH confidence)
+- `.planning/phases/02-multi-client-control/02-PATTERNS.md` — Phase 2 pattern mapping
+- `.planning/phases/02-multi-client-control/02-01-SUMMARY.md` — Phase 2 foundation (config, errors, metrics)
+- `.planning/phases/02-multi-client-control/02-02-SUMMARY.md` — Hub fan-out with late-joiner cache
 
 ---
-*State updated: 2026-05-07 by plan 01-07 execution*
+*State updated: 2026-05-08 by plan 02-02 execution*
