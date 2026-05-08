@@ -393,6 +393,12 @@ func (cw *ControlWriter) In() chan<- ControlMsg {
 	return cw.in
 }
 
+// InChanForTest returns the bidirectional channel for test assertions.
+// Only for use in tests. Production code should use In().
+func (cw *ControlWriter) InChanForTest() chan ControlMsg {
+	return cw.in
+}
+
 // Run drains cw.in, marshals each message, and writes to cw.conn.
 // Returns ctx.Err() on cancellation, or io.ErrClosedPipe / similar
 // on conn write failure. Marshal errors are logged but DO NOT abort

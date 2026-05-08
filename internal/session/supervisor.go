@@ -410,6 +410,21 @@ func NewActiveSessionForTest(serial string, videoHub *Hub) *DeviceSession {
 	}
 }
 
+// SetAudioHubForTest sets the audio hub on a test session. Only for use in tests.
+func (s *DeviceSession) SetAudioHubForTest(hub *Hub) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.audioHub = hub
+	s.audioAvailable = hub != nil
+}
+
+// SetControlWriterForTest sets the control writer on a test session. Only for use in tests.
+func (s *DeviceSession) SetControlWriterForTest(cw *scrcpy.ControlWriter) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.controlWriter = cw
+}
+
 // Existing Phase 1 accessors.
 
 func (s *DeviceSession) CodecMeta() [12]byte {
