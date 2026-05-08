@@ -29,6 +29,13 @@ var (
 	ErrSessionConflict      = &DomainError{Code: "SESSION_CONFLICT", HTTPStatus: http.StatusConflict, Message: "Session already exists for this device"}
 	ErrSessionNotFound      = &DomainError{Code: "SESSION_NOT_FOUND", HTTPStatus: http.StatusNotFound, Message: "Session not found"}
 	ErrUnauthorized         = &DomainError{Code: "UNAUTHORIZED", HTTPStatus: http.StatusUnauthorized, Message: "Invalid or missing API key"}
+
+	// Phase 2 sentinels (D-19)
+	ErrLeaseRequired    = &DomainError{Code: "LEASE_REQUIRED", HTTPStatus: http.StatusForbidden, Message: "Reservation lease required for this operation"}
+	ErrLeaseInvalid     = &DomainError{Code: "LEASE_INVALID", HTTPStatus: http.StatusForbidden, Message: "Reservation lease is invalid or expired"}
+	ErrLeaseHeldByOther = &DomainError{Code: "LEASE_HELD_BY_OTHER", HTTPStatus: http.StatusConflict, Message: "Reservation is held by another client"}
+	ErrNotController    = &DomainError{Code: "NOT_CONTROLLER", HTTPStatus: http.StatusForbidden, Message: "Only the lease holder can send control messages"}
+	ErrAudioUnavailable = &DomainError{Code: "AUDIO_UNAVAILABLE", HTTPStatus: http.StatusNotFound, Message: "Audio stream not available for this device"}
 )
 
 // errorResponse is the JSON envelope for error responses per D-07.
