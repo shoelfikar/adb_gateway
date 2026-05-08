@@ -212,13 +212,15 @@ func (s *DeviceSession) ReleaseResources() {
 func (s *DeviceSession) cleanupResources() {
 	if s.cleanup != nil {
 		s.cleanup()
+		s.mu.Lock()
 		s.cleanup = nil
+		s.videoConn = nil
+		s.videoLn = nil
+		s.reverseMap = nil
+		s.audioConn = nil
+		s.controlConn = nil
+		s.mu.Unlock()
 	}
-	s.videoConn = nil
-	s.videoLn = nil
-	s.reverseMap = nil
-	s.audioConn = nil
-	s.controlConn = nil
 }
 
 // Run spawns 4-6 goroutines under errgroup: video reader → videoHub,
@@ -228,6 +230,12 @@ func (s *DeviceSession) cleanupResources() {
 func (s *DeviceSession) Run(ctx context.Context) error {
 	g, ctx := errgroup.WithContext(ctx)
 	s.deviceMsgs = make(chan scrcpy.DeviceMessage, 32)
+
+	// Capture conn pointers into locals before starting goroutines to avoid
+	// data race: the closer goroutine writes nil to s.controlConn etc via
+	// cleanupResources, while the reader/writer goroutines read them.
+	audioConn := s.audioConn
+	controlConn := s.controlConn
 
 	// Closer goroutine: close sockets when context cancels.
 	g.Go(func() error {
@@ -248,7 +256,7 @@ func (s *DeviceSession) Run(ctx context.Context) error {
 	g.Go(func() error { return s.videoReaderLoop(ctx) })
 
 	// 2. Audio Hub + Audio Reader (only if audio is available).
-	if s.audioAvailable && s.audioConn != nil {
+	if s.audioAvailable && audioConn != nil {
 		s.audioHub = NewHub(HubOpts{
 			Stream:              "audio",
 			BufFrames:           s.bufFrames,
@@ -256,18 +264,18 @@ func (s *DeviceSession) Run(ctx context.Context) error {
 			Log:                 s.log,
 		})
 		g.Go(func() error { return s.audioHub.Run(ctx) })
-		g.Go(func() error { return s.audioReaderLoop(ctx) })
+		g.Go(func() error { return s.audioReaderLoop(ctx, audioConn) })
 	}
 
 	// 3. Control Writer + Device Message Reader (on the same conn).
-	if s.controlConn != nil {
+	if controlConn != nil {
 		s.controlWriter = scrcpy.NewControlWriter(scrcpy.ControlWriterOpts{
-			Conn:       s.controlConn,
+			Conn:       controlConn,
 			Log:        s.log,
 			BufferSize: 64,
 		})
 		g.Go(func() error { return s.controlWriter.Run(ctx) })
-		g.Go(func() error { return s.deviceMessageReaderLoop(ctx) })
+		g.Go(func() error { return s.deviceMessageReaderLoop(ctx, controlConn) })
 	}
 
 	return g.Wait()
@@ -299,8 +307,8 @@ func (s *DeviceSession) videoReaderLoop(ctx context.Context) error {
 
 // audioReaderLoop reads frames from the audio connection and publishes to audioHub.
 // Codec ID was already consumed by the launcher's probe.
-func (s *DeviceSession) audioReaderLoop(ctx context.Context) error {
-	conn := s.audioConn
+// The conn parameter is passed explicitly to avoid racing with cleanupResources nil-assignment.
+func (s *DeviceSession) audioReaderLoop(ctx context.Context, conn net.Conn) error {
 	for {
 		select {
 		case <-ctx.Done():
@@ -324,8 +332,8 @@ func (s *DeviceSession) audioReaderLoop(ctx context.Context) error {
 
 // deviceMessageReaderLoop reads DeviceMessages from the control connection
 // and sends them on the deviceMsgs channel.
-func (s *DeviceSession) deviceMessageReaderLoop(ctx context.Context) error {
-	conn := s.controlConn
+// The conn parameter is passed explicitly to avoid racing with cleanupResources nil-assignment.
+func (s *DeviceSession) deviceMessageReaderLoop(ctx context.Context, conn net.Conn) error {
 	for {
 		select {
 		case <-ctx.Done():
