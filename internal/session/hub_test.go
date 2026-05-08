@@ -47,13 +47,11 @@ func TestHubMultiViewer(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	v1ch, v1unsub, err := h.Subscribe("viewer-1")
+	v1ch, _, err := h.Subscribe("viewer-1")
 	require.NoError(t, err)
-	defer v1unsub()
 
-	v2ch, v2unsub, err := h.Subscribe("viewer-2")
+	v2ch, _, err := h.Subscribe("viewer-2")
 	require.NoError(t, err)
-	defer v2unsub()
 
 	go func() {
 		if err := h.Run(ctx); err != nil && err != context.Canceled {
@@ -91,10 +89,8 @@ func TestHubBackpressure(t *testing.T) {
 	// Snapshot the dropped counter before the test.
 	droppedBefore := testutil.ToFloat64(obs.FramesDroppedTotal.WithLabelValues("video"))
 
-	v1ch, v1unsub, err := h.Subscribe("viewer-1")
+	_, _, err := h.Subscribe("viewer-1")
 	require.NoError(t, err)
-	_ = v1ch
-	defer v1unsub()
 
 	go func() {
 		if err := h.Run(ctx); err != nil && err != context.Canceled {
@@ -103,8 +99,8 @@ func TestHubBackpressure(t *testing.T) {
 	}()
 
 	// Publish 65 P-frames without draining the viewer's channel.
-	// Buffer is 60 + 1 metadata = 61 messages capacity.
-	// After the 60th frame fills the buffer, the remaining frames are dropped.
+	// Buffer capacity is 60. After 1 metadata pre-load, there's room for 59
+	// more frames. The remaining 6 frames are dropped.
 	for i := 0; i < 65; i++ {
 		h.Publish(mkFrame(byte(i+1), false))
 	}
@@ -114,7 +110,7 @@ func TestHubBackpressure(t *testing.T) {
 
 	cancel()
 
-	// Verify drops occurred (at least some of the 65 - buffer capacity = at least a few drops).
+	// Verify drops occurred (at least some frames were dropped).
 	droppedAfter := testutil.ToFloat64(obs.FramesDroppedTotal.WithLabelValues("video"))
 	droppedDelta := droppedAfter - droppedBefore
 	assert.GreaterOrEqual(t, int(droppedDelta), 4, "should have dropped at least 4 frames")
@@ -128,50 +124,41 @@ func TestHubSlowDisconnect(t *testing.T) {
 
 	droppedBefore := testutil.ToFloat64(obs.FramesDroppedTotal.WithLabelValues("video"))
 
-	v1ch, v1unsub, err := h.Subscribe("viewer-1")
+	v1ch, _, err := h.Subscribe("viewer-1")
 	require.NoError(t, err)
-	defer v1unsub()
 
 	go func() {
-		if err := h.Run(ctx); err != nil && err != context.Canceled {
+		if err := h.Run(ctx); err != nil && err != err && err != context.Canceled {
 			t.Logf("hub run: %v", err)
 		}
 	}()
 
 	// Publish enough frames to trigger eviction.
-	// Channel buffers 60 frames (after metadata). The first 60 land in the buffer
-	// (success). Publishes 61 through 180 each fail (drops 1..120).
-	// On the 120th consecutive drop, eviction fires.
-	for i := 0; i < 180; i++ {
+	// The viewer's channel has capacity 60 with 1 metadata pre-loaded,
+	// leaving room for 59 more frames. After filling, each further frame
+	// is dropped. 120 consecutive drops triggers eviction.
+	// We need at least 59 (buffer fill) + 120 (consecutive drops) = 179
+	// frames to make it through h.in to the Hub goroutine.
+	// Since h.in has capacity 16 and Publish is non-blocking, we publish
+	// in small batches with sleeps to ensure the Hub goroutine processes
+	// frames between batches.
+	for i := 0; i < 250; i++ {
 		h.Publish(mkFrame(byte(i%256), false))
-	}
-
-	// Give the Hub goroutine time to process and evict.
-	time.Sleep(200 * time.Millisecond)
-
-	// The viewer's channel should be closed (eviction).
-	// Drain any remaining messages first.
-	for {
-		select {
-		case _, ok := <-v1ch:
-			if !ok {
-				// Channel closed as expected.
-				goto verifyDrops
-			}
-		default:
-			// Channel not closed yet or still has data; try draining with timeout.
-			select {
-			case _, ok := <-v1ch:
-				if !ok {
-					goto verifyDrops
-				}
-			case <-time.After(500 * time.Millisecond):
-				t.Fatal("timed out waiting for viewer channel to close")
-			}
+		// Yield periodically so the Hub goroutine can process frames.
+		if i%50 == 49 {
+			time.Sleep(20 * time.Millisecond)
 		}
 	}
 
-verifyDrops:
+	// Wait for the Hub goroutine to process all frames and evict the viewer.
+	assert.Eventually(t, func() bool {
+		return h.ViewerCountForTest() == 0
+	}, 2*time.Second, 20*time.Millisecond, "viewer should be evicted after 120 consecutive drops")
+
+	// The viewer's channel should be closed by eviction.
+	// Drain remaining messages and verify closure.
+	drainAndVerifyClosed(t, v1ch, "viewer-1")
+
 	// Verify that at least 120 drops were recorded.
 	droppedAfter := testutil.ToFloat64(obs.FramesDroppedTotal.WithLabelValues("video"))
 	droppedDelta := droppedAfter - droppedBefore
@@ -201,9 +188,8 @@ func TestHubLateJoiner(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 
 	// Late joiner subscribes.
-	lateCh, lateUnsub, err := h.Subscribe("late")
+	lateCh, _, err := h.Subscribe("late")
 	require.NoError(t, err)
-	defer lateUnsub()
 
 	// First message must be the 12-byte metadata.
 	expectedMeta := []byte{0xAA, 0xBB, 0xCC, 0x44, 0x33, 0x22, 0x11, 0x00, 0x10, 0x00, 0x00, 0x00}
@@ -229,9 +215,8 @@ func TestHubDropCounterResets(t *testing.T) {
 	h := newTestHub(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 
-	v1ch, v1unsub, err := h.Subscribe("viewer-1")
+	v1ch, _, err := h.Subscribe("viewer-1")
 	require.NoError(t, err)
-	defer v1unsub()
 
 	go func() {
 		if err := h.Run(ctx); err != nil && err != context.Canceled {
@@ -239,8 +224,9 @@ func TestHubDropCounterResets(t *testing.T) {
 		}
 	}()
 
-	// Phase 1: Fill the 60-frame buffer + 1 metadata slot.
-	// Publish 60 P-frames. They should all land in the buffer.
+	// Phase 1: Publish 60 P-frames to fill the viewer's buffer.
+	// After 1 metadata pre-loaded, the buffer has room for 59 more.
+	// But we'll fill it until the viewer stops accepting.
 	for i := 0; i < 60; i++ {
 		h.Publish(mkFrame(byte(i%256), false))
 	}
@@ -266,7 +252,7 @@ func TestHubDropCounterResets(t *testing.T) {
 	h.Publish(mkFrame(0xAA, false))
 	time.Sleep(50 * time.Millisecond)
 
-	// Phase 4: Publish 119 more frames — 60 fill the buffer, 59 drop.
+	// Phase 4: Publish 119 more frames — the channel refills and 59 more drop.
 	// Total cumulative drops = 59 + 59 = 118, but consecutive never reaches 120.
 	for i := 0; i < 119; i++ {
 		h.Publish(mkFrame(byte(i%256), false))
@@ -302,9 +288,8 @@ func TestHubKeyframeReplacedAtomically(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 
 	// Late joiner subscribes AFTER both keyframes.
-	lateCh, lateUnsub, err := h.Subscribe("late")
+	lateCh, _, err := h.Subscribe("late")
 	require.NoError(t, err)
-	defer lateUnsub()
 
 	// First message: metadata.
 	expectedMeta := []byte{0xAA, 0xBB, 0xCC, 0x44, 0x33, 0x22, 0x11, 0x00, 0x10, 0x00, 0x00, 0x00}
@@ -323,13 +308,11 @@ func TestHubRunCancel(t *testing.T) {
 	h := newTestHub(t)
 	ctx, cancel := context.WithCancel(context.Background())
 
-	v1ch, v1unsub, err := h.Subscribe("viewer-1")
+	v1ch, _, err := h.Subscribe("viewer-1")
 	require.NoError(t, err)
-	defer v1unsub()
 
-	v2ch, v2unsub, err := h.Subscribe("viewer-2")
+	v2ch, _, err := h.Subscribe("viewer-2")
 	require.NoError(t, err)
-	defer v2unsub()
 
 	runErr := make(chan error, 1)
 	go func() {
@@ -347,12 +330,10 @@ func TestHubRunCancel(t *testing.T) {
 		t.Fatal("Run did not return within timeout after context cancellation")
 	}
 
-	// Both viewer channels should be closed.
-	_, ok1 := <-v1ch
-	assert.False(t, ok1, "viewer-1 channel should be closed after Run exits")
-
-	_, ok2 := <-v2ch
-	assert.False(t, ok2, "viewer-2 channel should be closed after Run exits")
+	// Both viewer channels should be closed (by shutdown).
+	// They may contain data (metadata), so drain first then verify closed.
+	drainAndVerifyClosed(t, v1ch, "viewer-1")
+	drainAndVerifyClosed(t, v2ch, "viewer-2")
 }
 
 // TestHubPublishWhenInFull verifies that when the Hub's input channel is full,
@@ -401,5 +382,23 @@ func readChan(t *testing.T, ch <-chan []byte, timeout time.Duration, msg string,
 	case <-time.After(timeout):
 		t.Fatalf("timeout waiting for: "+msg, args...)
 		return nil
+	}
+}
+
+// drainAndVerifyClosed drains all messages from a channel and then verifies
+// that the channel is closed (ok=false on read).
+func drainAndVerifyClosed(t *testing.T, ch <-chan []byte, name string) {
+	t.Helper()
+	timeout := time.After(2 * time.Second)
+	for {
+		select {
+		case _, ok := <-ch:
+			if !ok {
+				return // Channel is closed as expected.
+			}
+			// More data in channel, keep draining.
+		case <-timeout:
+			t.Fatalf("%s: timed out waiting for channel to close", name)
+		}
 	}
 }
