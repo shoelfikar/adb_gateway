@@ -60,6 +60,12 @@ type Hub struct {
 	bufFrames           int    // D-04 (StreamConfig.ViewerBufferFrames)
 	maxConsecutiveDrops int    // D-05 (StreamConfig.MaxConsecutiveDrops)
 
+	// frameCount is incremented on EVERY Publish call, regardless of whether
+	// the frame was enqueued or dropped at the producer-side boundary. The
+	// Plan 03-02 stall watchdog reads this lock-free to detect frame-flow
+	// flatlines. Placed before viewers so it is visible at struct head.
+	frameCount atomic.Uint64
+
 	in chan *Frame // buffered ~16; supervisor produces, Hub consumes
 
 	// metaCache and keyframeCache feed late joiners.
@@ -118,7 +124,12 @@ func (h *Hub) SetCodecMeta(meta [12]byte) {
 // input channel is full (every viewer is already saturated), the frame
 // is dropped and the dropped counter is incremented under stream label.
 // Returns false if the frame was dropped at the producer-side boundary.
+//
+// Plan 03-02: frameCount is incremented BEFORE the enqueue/drop branch so
+// the stall watchdog observes producer activity even when all viewers are
+// saturated. Reading the counter is lock-free (atomic.Load).
 func (h *Hub) Publish(f *Frame) bool {
+	h.frameCount.Add(1)
 	select {
 	case h.in <- f:
 		return true
@@ -126,6 +137,13 @@ func (h *Hub) Publish(f *Frame) bool {
 		obs.FramesDroppedTotal.WithLabelValues(h.stream).Inc()
 		return false
 	}
+}
+
+// FrameCount returns the cumulative number of Publish calls since the Hub
+// was created. Plan 03-02 watchdog uses this to detect frame-flow flatlines:
+// the value increases monotonically while the producer is alive.
+func (h *Hub) FrameCount() uint64 {
+	return h.frameCount.Load()
 }
 
 // Subscribe registers a new viewer and atomically pre-loads metadata

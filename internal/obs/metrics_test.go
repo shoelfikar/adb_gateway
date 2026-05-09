@@ -205,6 +205,12 @@ func TestPhase2NoDeviceSerialLabel(t *testing.T) {
 	}
 
 	for _, fam := range fams {
+		// Plan 03-02 (DEV-05) explicitly adds device_serial to
+		// gateway_session_state — the D-18 cardinality lock applies
+		// to baseline collectors only.
+		if fam.GetName() == "gateway_session_state" {
+			continue
+		}
 		for _, m := range fam.Metric {
 			for _, lp := range m.Label {
 				require.False(t, forbidden[lp.GetName()],
