@@ -8,36 +8,36 @@ progress:
   total_phases: 4
   completed_phases: 2
   total_plans: 18
-  completed_plans: 15
-  percent: 83
+  completed_plans: 16
+  percent: 89
 ---
 
 # Project State: ADB Gateway
 
 **Initialized:** 2026-05-06
 **Mode:** YOLO, sequential, standard granularity
-**Last updated:** 2026-05-09 (Phase 3 plan 01 complete — foundation primitives shipped)
+**Last updated:** 2026-05-09 (Phase 3 plan 02 complete — FSM watchdog & recovery shipped)
 
 ## Project Reference
 
 **Core value:** Reliable, low-latency streaming and control of many physical Android devices, exposed as a clean API that `pelni_server` can embed without needing to understand ADB or scrcpy internals.
 
-**Current focus:** Phase 3 — Multi-Device Fleet — IN PROGRESS. Plan 03-01 complete (foundation primitives: ADB streaming helpers, path validator, Phase 3 sentinels, SCR-07 LaunchOptions, AppProcessPID, koanf scrcpy.* keys, DEV-06 audit).
+**Current focus:** Phase 3 — Multi-Device Fleet — IN PROGRESS. Plans 03-01 and 03-02 complete. 03-02 shipped FSM `StateReconnecting`, Hub atomic frame counter, stall watchdog (5s × 5 = 25s detection), backoff-capped recovery orchestrator (3 attempts → sticky failed), `gateway_session_state` one-hot Prometheus gauge, and `RestartSession` handler (route registration handed off to 03-03).
 
 ## Current Position
 
 | Field | Value |
 |-------|-------|
 | Phase | 3 — Multi-Device Fleet |
-| Plan | 03-01 complete; 03-02..03-04 pending |
+| Plan | 03-01, 03-02 complete; 03-03..03-04 pending |
 | Status | executing |
-| Phase progress | 1/4 plans complete |
-| Overall progress | 2/4 phases complete + 1 Phase 3 plan |
+| Phase progress | 2/4 plans complete |
+| Overall progress | 2/4 phases complete + 2 Phase 3 plans |
 
 ```
 [██████████] 100%  Phase 1 (8/8 plans complete)
 [██████████] 100%  Phase 2 (6/6 plans complete)
-[██░░░░░░░░] 25%   Phase 3 (1/4 plans complete)
+[█████░░░░░] 50%   Phase 3 (2/4 plans complete)
 [░░░░░░░░░░] 0%   Phase 4
 ```
 
@@ -46,8 +46,8 @@ progress:
 | Metric | Value |
 |--------|-------|
 | Phases completed | 2 |
-| Plans completed | 15 (01-01..01-08, 02-01..02-06, 03-01) |
-| Requirements shipped | 2 / 68 (SCR-07, DEV-06) |
+| Plans completed | 16 (01-01..01-08, 02-01..02-06, 03-01, 03-02) |
+| Requirements shipped | 4 / 68 (SCR-07, DEV-06, DEV-05, OPS-02) |
 | Validated requirements | 0 |
 | Decisions logged | 8 (in PROJECT.md Key Decisions, all `— Pending`) |
 
@@ -135,9 +135,9 @@ progress:
 
 ## Session Continuity
 
-**Last action:** Plan 03-01 executed — ADB streaming helpers (shell.go: ShellRunRaw / SyncPushReader / SyncPullWriter / ShellV2Stream), path validator (D-11 table), five Phase 3 sentinels (PATH_NOT_ALLOWED / FILE_TOO_LARGE / INSTALL_FAILED / DEVICE_BUSY / RECORDING_FAILED), SCR-07 LaunchOptions extension (Codec/MaxSize/BitRate/MaxFPS/AudioCodec/AudioSource), AppProcessPID via pgrep, ScrcpyConfig koanf nested keys, DEV-06 device-serial stability audit. 21 new test functions, all -race-clean. RESEARCH.md A1 + A2 RESOLVED; A3 deferred to 03-03.
+**Last action:** Plan 03-02 executed — `StateReconnecting` added to session FSM with `Active <-> Reconnecting -> {Active,Failed,Stopping}` edges; `Hub.frameCount atomic.Uint64` + `FrameCount()` for lock-free polling; `StallWatchdog` (Interval=5s × Threshold=5 = 25s detection, first-frame gate per Pitfall 2, single-fire-per-stall); `Recovery` orchestrator on `cenkalti/backoff/v4` with `WithMaxRetries(bo, 2)` (3 attempts) and lock-discipline-safe relaunch; `gateway_session_state{device_serial,state}` one-hot Prometheus GaugeVec with `SetSessionState` helper; `DeviceSession.AttachStallRecovery` (opt-in) + `transitionLocked` funnel that stamps the gauge; `api.RestartSession` handler + `LauncherFactory` type for Failed→Idle→Starting→Active manual recovery (route registration deferred to 03-03 to avoid wave-2 router.go conflict). All `go test -race ./internal/session/... ./internal/api/... ./internal/obs/...` green. DEV-05 + OPS-02 satisfied; ROADMAP success criterion #2 first half (auto-recovery) shipped.
 
-**Next action:** Plan 03-02 (FSM/watchdog/recovery)
+**Next action:** Plan 03-03 (logcat / screenshot / files + register POST /devices/{serial}/restart route per 03-02 handoff)
 
 **Files of record:**
 
@@ -158,6 +158,7 @@ progress:
 - `.planning/phases/03-multi-device-fleet/03-PATTERNS.md` — Phase 3 pattern mapping
 - `.planning/phases/03-multi-device-fleet/03-VALIDATION.md` — Phase 3 validation criteria
 - `.planning/phases/03-multi-device-fleet/03-01-SUMMARY.md` — foundation primitives (ADB helpers, path validator, sentinels, SCR-07, DEV-06)
+- `.planning/phases/03-multi-device-fleet/03-02-SUMMARY.md` — FSM watchdog & recovery (StateReconnecting, stall watchdog, backoff recovery, gateway_session_state gauge, RestartSession handler — 03-03 route handoff)
 
 ---
 *State updated: 2026-05-08 by plan 02-06 execution*
