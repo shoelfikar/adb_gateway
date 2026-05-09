@@ -199,3 +199,95 @@ func TestLaunchResultCleanupOrder(t *testing.T) {
 // Suppress unused import warning.
 var _ = io.Reader(nil)
 var _ = context.Background
+
+// ---------------------------------------------------------------------------
+// Phase 3 — SCR-07 LaunchOptions extension + AppProcessPID capture (03-01)
+// ---------------------------------------------------------------------------
+
+// TestBuildAppProcessCmdBackwardCompat: zero values for SCR-07 fields must
+// produce IDENTICAL CLI args as Phase 1/2 (no new flags emitted).
+func TestBuildAppProcessCmdBackwardCompat(t *testing.T) {
+	opts := LaunchOptions{
+		AudioEnabled:   false,
+		ControlEnabled: false,
+		// All SCR-07 fields zero/empty.
+	}
+	cmd := BuildAppProcessCmd("abcd1234", opts)
+
+	assert.Contains(t, cmd, "scid=abcd1234")
+	assert.Contains(t, cmd, "audio=false")
+	assert.Contains(t, cmd, "control=false")
+
+	// Phase 1/2 must NOT see any SCR-07 fields when zero.
+	assert.NotContains(t, cmd, "video_codec=")
+	assert.NotContains(t, cmd, "max_size=")
+	assert.NotContains(t, cmd, "video_bit_rate=")
+	assert.NotContains(t, cmd, "max_fps=")
+	assert.NotContains(t, cmd, "audio_codec=")
+	assert.NotContains(t, cmd, "audio_source=")
+}
+
+// TestBuildAppProcessCmdSCR07Codec verifies non-zero Codec emits video_codec=.
+func TestBuildAppProcessCmdSCR07Codec(t *testing.T) {
+	cases := []struct {
+		codec string
+		want  string
+	}{
+		{"h264", "video_codec=h264"},
+		{"h265", "video_codec=h265"},
+		{"av1", "video_codec=av1"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.codec, func(t *testing.T) {
+			opts := LaunchOptions{Codec: tc.codec}
+			cmd := BuildAppProcessCmd("scid01", opts)
+			assert.Contains(t, cmd, tc.want)
+		})
+	}
+}
+
+// TestBuildAppProcessCmdSCR07Numerics verifies MaxSize/BitRate/MaxFPS only
+// emit when > 0 (zero is "use server default", per SCR-07).
+func TestBuildAppProcessCmdSCR07Numerics(t *testing.T) {
+	t.Run("all_set", func(t *testing.T) {
+		opts := LaunchOptions{MaxSize: 1080, BitRate: 4_000_000, MaxFPS: 30}
+		cmd := BuildAppProcessCmd("scid01", opts)
+		assert.Contains(t, cmd, "max_size=1080")
+		assert.Contains(t, cmd, "video_bit_rate=4000000")
+		assert.Contains(t, cmd, "max_fps=30")
+	})
+	t.Run("zero_omits", func(t *testing.T) {
+		opts := LaunchOptions{MaxSize: 0, BitRate: 0, MaxFPS: 0}
+		cmd := BuildAppProcessCmd("scid01", opts)
+		assert.NotContains(t, cmd, "max_size=")
+		assert.NotContains(t, cmd, "video_bit_rate=")
+		assert.NotContains(t, cmd, "max_fps=")
+	})
+}
+
+// TestBuildAppProcessCmdSCR07Audio verifies AudioCodec/AudioSource emit
+// only when non-empty.
+func TestBuildAppProcessCmdSCR07Audio(t *testing.T) {
+	t.Run("opus_output", func(t *testing.T) {
+		opts := LaunchOptions{AudioCodec: "opus", AudioSource: "output"}
+		cmd := BuildAppProcessCmd("scid01", opts)
+		assert.Contains(t, cmd, "audio_codec=opus")
+		assert.Contains(t, cmd, "audio_source=output")
+	})
+	t.Run("empty_omits", func(t *testing.T) {
+		opts := LaunchOptions{AudioCodec: "", AudioSource: ""}
+		cmd := BuildAppProcessCmd("scid01", opts)
+		assert.NotContains(t, cmd, "audio_codec=")
+		assert.NotContains(t, cmd, "audio_source=")
+	})
+}
+
+// TestLaunchResultAppProcessPIDField verifies the new field is reachable
+// (used by perf sampler in OPS-10).
+func TestLaunchResultAppProcessPIDField(t *testing.T) {
+	r := &LaunchResult{AppProcessPID: 12345}
+	assert.Equal(t, 12345, r.AppProcessPID)
+
+	zero := &LaunchResult{}
+	assert.Equal(t, 0, zero.AppProcessPID, "zero value when pgrep fails")
+}

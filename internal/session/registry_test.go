@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"net"
+	"regexp"
 	"sync"
 	"testing"
 	"time"
@@ -489,4 +490,38 @@ func TestReleaseResources_Idempotent(t *testing.T) {
 
 	sess.ReleaseResources() // second call — should be a no-op
 	assert.Equal(t, 1, cleanupCount, "cleanup should still only be called once (idempotent)")
+}
+// ---------------------------------------------------------------------------
+// Phase 3 — DEV-06 device-serial stability audit (03-01)
+// ---------------------------------------------------------------------------
+
+// TestDeviceSerialStability locks the contract that a device serial round-trips
+// byte-for-byte through Registry.Add -> entry -> Session -> metric labels.
+// Future refactors that derive serial from USB path or any unstable identifier
+// will fail this test (DEV-06 audit).
+func TestDeviceSerialStability(t *testing.T) {
+	const want = "ABCD1234"
+
+	// 1. Registry.GetOrCreate stores the serial verbatim.
+	r := NewRegistry()
+	entry := r.GetOrCreate(want)
+	assert.Equal(t, want, entry.Serial, "registry must preserve serial bytes")
+
+	// 2. Registry.Get returns the same bytes.
+	got, ok := r.Get(want)
+	require.True(t, ok)
+	assert.Equal(t, want, got.Serial)
+
+	// 3. Round-trip through DeviceSession.Serial field (the metric label source).
+	sess := &DeviceSession{Serial: want}
+	entry.SetSession(sess)
+	assert.Equal(t, want, entry.GetSession().Serial,
+		"DeviceSession.Serial must equal registry serial — locked for DEV-06")
+
+	// 4. Serial must be valid per the API regex (handlers_devices.go:21).
+	//    Replicating the pattern here because the api package would create an
+	//    import cycle. If the regex changes, both must change in lockstep.
+	pattern := regexp.MustCompile(`^[a-zA-Z0-9:._-]+$`)
+	assert.True(t, pattern.MatchString(want),
+		"serial must satisfy api.serialPattern — handlers reject otherwise")
 }
