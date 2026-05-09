@@ -152,3 +152,53 @@ func TestStoppingToFailedTransition(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, StateFailed, state)
 }
+
+// TestFSMReconnecting verifies Phase 3 plan 03-02:
+//   - active <-> reconnecting (recoverable stall)
+//   - reconnecting -> failed (recovery exhausted)
+//   - reconnecting -> stopping (DELETE /sessions during recovery)
+//   - reconnecting -> idle (rejected; recovery must terminate via failed/active/stopping)
+//   - idle/starting -> reconnecting (rejected; only active devices stall)
+//   - String(StateReconnecting) == "reconnecting"
+func TestFSMReconnecting(t *testing.T) {
+	t.Run("string representation", func(t *testing.T) {
+		assert.Equal(t, "reconnecting", StateReconnecting.String())
+	})
+
+	validCases := []struct {
+		name string
+		from SessionState
+		to   SessionState
+	}{
+		{"active to reconnecting", StateActive, StateReconnecting},
+		{"reconnecting to active", StateReconnecting, StateActive},
+		{"reconnecting to failed", StateReconnecting, StateFailed},
+		{"reconnecting to stopping", StateReconnecting, StateStopping},
+	}
+	for _, tt := range validCases {
+		t.Run("valid/"+tt.name, func(t *testing.T) {
+			got, err := TransitionTo(tt.from, tt.to)
+			assert.NoError(t, err)
+			assert.Equal(t, tt.to, got)
+		})
+	}
+
+	invalidCases := []struct {
+		name string
+		from SessionState
+		to   SessionState
+	}{
+		{"reconnecting to idle", StateReconnecting, StateIdle},
+		{"idle to reconnecting", StateIdle, StateReconnecting},
+		{"starting to reconnecting", StateStarting, StateReconnecting},
+		{"failed to reconnecting", StateFailed, StateReconnecting},
+		{"stopping to reconnecting", StateStopping, StateReconnecting},
+	}
+	for _, tt := range invalidCases {
+		t.Run("invalid/"+tt.name, func(t *testing.T) {
+			got, err := TransitionTo(tt.from, tt.to)
+			assert.Error(t, err)
+			assert.Equal(t, tt.from, got)
+		})
+	}
+}

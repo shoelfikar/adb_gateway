@@ -5,6 +5,7 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"sync"
 	"testing"
 	"time"
 
@@ -380,6 +381,37 @@ func TestHubPublishWhenInFull(t *testing.T) {
 	// No frames were emitted (Run not started), but at least 1 drop was recorded.
 	assert.Equal(t, emittedBefore, emittedAfter, "no frames should be emitted when Run is not started")
 	assert.GreaterOrEqual(t, droppedAfter-droppedBefore, float64(1), "at least 1 drop should be recorded")
+}
+
+// TestHubFrameCount verifies Plan 03-02: Hub.Publish increments an atomic
+// frame counter that the watchdog reads lock-free.
+func TestHubFrameCount(t *testing.T) {
+	t.Run("sequential", func(t *testing.T) {
+		h := newTestHub(t)
+		assert.Equal(t, uint64(0), h.FrameCount())
+		for i := 0; i < 100; i++ {
+			h.Publish(mkFrame(byte(i), false))
+		}
+		assert.Equal(t, uint64(100), h.FrameCount(),
+			"FrameCount must increment on every Publish, even when in is full")
+	})
+
+	t.Run("concurrent", func(t *testing.T) {
+		h := newTestHub(t)
+		var wg sync.WaitGroup
+		for g := 0; g < 10; g++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for i := 0; i < 100; i++ {
+					h.Publish(mkFrame(byte(i), false))
+				}
+			}()
+		}
+		wg.Wait()
+		assert.Equal(t, uint64(1000), h.FrameCount(),
+			"FrameCount must be race-free under concurrent Publish")
+	})
 }
 
 // readChan is a test helper that reads from a channel with a timeout.
