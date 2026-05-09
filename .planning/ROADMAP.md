@@ -94,6 +94,14 @@ Plans:
 
 **Research flag**: no -- PITFALLS.md provides concrete remedies for every Phase 3 failure mode (USB autosuspend, hub BoM, FSM, watchdog, reaper, FD limits). Architecture stays the same as Phase 2; this phase is mostly hardening + ADB-shell feature surface, both well-trodden patterns.
 
+**Progress**:
+| Plan | Status | Summary |
+|------|--------|---------|
+| 03-01 foundation-primitives | done (2026-05-09) | ADB streaming helpers, path validator (D-11), 5 Phase 3 sentinels, SCR-07 LaunchOptions, AppProcessPID via pgrep, ScrcpyConfig koanf keys, DEV-06 audit. Requirements shipped: SCR-07, DEV-06. |
+| 03-02 fsm-watchdog-recovery | pending | — |
+| 03-03 logcat-screenshot-files | pending | — |
+| 03-04 apk-recording | pending | — |
+
 ### Phase 4: Horizontal Scaling
 
 **Goal**: The gateway runs as N instances behind a load balancer with Redis-backed device-to-instance routing, surviving instance death within one heartbeat interval; recordings have a configurable retention policy and Prometheus dashboards aggregate cleanly across instances.

@@ -3,41 +3,41 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-last_updated: "2026-05-08T11:42:00.000Z"
+last_updated: "2026-05-09T00:00:00.000Z"
 progress:
   total_phases: 4
   completed_phases: 2
-  total_plans: 14
-  completed_plans: 13
-  percent: 93
+  total_plans: 18
+  completed_plans: 15
+  percent: 83
 ---
 
 # Project State: ADB Gateway
 
 **Initialized:** 2026-05-06
 **Mode:** YOLO, sequential, standard granularity
-**Last updated:** 2026-05-08 (Phase 2 complete — all 6 plans shipped)
+**Last updated:** 2026-05-09 (Phase 3 plan 01 complete — foundation primitives shipped)
 
 ## Project Reference
 
 **Core value:** Reliable, low-latency streaming and control of many physical Android devices, exposed as a clean API that `pelni_server` can embed without needing to understand ADB or scrcpy internals.
 
-**Current focus:** Phase 2 — Multi-Client + Control — COMPLETE. All 6 plans shipped. Phase 3 (Multi-Device Fleet) next.
+**Current focus:** Phase 3 — Multi-Device Fleet — IN PROGRESS. Plan 03-01 complete (foundation primitives: ADB streaming helpers, path validator, Phase 3 sentinels, SCR-07 LaunchOptions, AppProcessPID, koanf scrcpy.* keys, DEV-06 audit).
 
 ## Current Position
 
 | Field | Value |
 |-------|-------|
-| Phase | 2 — Multi-Client + Control |
-| Plan | 6 plans (02-01 through 02-06) |
+| Phase | 3 — Multi-Device Fleet |
+| Plan | 03-01 complete; 03-02..03-04 pending |
 | Status | executing |
-| Phase progress | 6/6 plans complete (Phase 2 done!) |
-| Overall progress | 2/4 phases complete |
+| Phase progress | 1/4 plans complete |
+| Overall progress | 2/4 phases complete + 1 Phase 3 plan |
 
 ```
 [██████████] 100%  Phase 1 (8/8 plans complete)
 [██████████] 100%  Phase 2 (6/6 plans complete)
-[░░░░░░░░░░] 0%   Phase 3
+[██░░░░░░░░] 25%   Phase 3 (1/4 plans complete)
 [░░░░░░░░░░] 0%   Phase 4
 ```
 
@@ -46,8 +46,8 @@ progress:
 | Metric | Value |
 |--------|-------|
 | Phases completed | 2 |
-| Plans completed | 13 (01-01..01-08, 02-01..02-05, 02-06) |
-| Requirements shipped | 0 / 68 |
+| Plans completed | 15 (01-01..01-08, 02-01..02-06, 03-01) |
+| Requirements shipped | 2 / 68 (SCR-07, DEV-06) |
 | Validated requirements | 0 |
 | Decisions logged | 8 (in PROJECT.md Key Decisions, all `— Pending`) |
 
@@ -104,6 +104,12 @@ progress:
 47. **NewActiveSessionForTest provides test affordance for Hub-based WS handler integration tests.**
 48. **CORS middleware added to router stack** (from 02-01 cors.go).
 49. **1000-cycle soak test uses //go:build soak tag; goroutine delta = 0 from baseline.**
+50. **prife/goadb v0.4.x SyncFileWriter/Reader satisfy io.Writer/io.Reader** — io.Copy works directly; no hand-rolled SEND/DATA/DONE wire frames needed (A1 RESOLVED in 03-01).
+51. **Shell-v2 demuxer is owned in-tree** — prife/goadb does NOT split stdout/stderr/exit; demuxShellV2RawIO parses AOSP packet format (1B id + 4B LE length + payload) with 16 MiB sanity cap (A2 RESOLVED in 03-01).
+52. **scrcpy app_process PID captured via pgrep AFTER codec metadata read** — lowest-PID wins on multi-match; PID=0 on failure does NOT abort launch (OPS-10 perf sampler logs+skips).
+53. **LaunchOptions zero values produce byte-identical Phase 1/2 CLI args** — SCR-07 fields only emitted when non-zero/non-empty; backward compat is a hard contract enforced by TestBuildAppProcessCmdBackwardCompat.
+54. **ValidateDevicePath single-decodes** — browsers single-decode; double-decode loop enables %252e bypass. url.QueryUnescape -> path.Clean -> prefix(base+"/").
+55. **Path validator rejects base-dir-itself** — only files INSIDE the base are allowed; pushing TO the dir itself is meaningless and dangerous if the dir is a symlink.
 
 ### Key Research Findings (Phase 1)
 
@@ -129,9 +135,9 @@ progress:
 
 ## Session Continuity
 
-**Last action:** Plan 02-06 executed — WS audio/control endpoints, reservation REST handlers, router wiring, metrics registration, 1000-cycle soak test (all tests passing under -race).
+**Last action:** Plan 03-01 executed — ADB streaming helpers (shell.go: ShellRunRaw / SyncPushReader / SyncPullWriter / ShellV2Stream), path validator (D-11 table), five Phase 3 sentinels (PATH_NOT_ALLOWED / FILE_TOO_LARGE / INSTALL_FAILED / DEVICE_BUSY / RECORDING_FAILED), SCR-07 LaunchOptions extension (Codec/MaxSize/BitRate/MaxFPS/AudioCodec/AudioSource), AppProcessPID via pgrep, ScrcpyConfig koanf nested keys, DEV-06 device-serial stability audit. 21 new test functions, all -race-clean. RESEARCH.md A1 + A2 RESOLVED; A3 deferred to 03-03.
 
-**Next action:** Phase 3 planning (/gsd-plan-phase 3)
+**Next action:** Plan 03-02 (FSM/watchdog/recovery)
 
 **Files of record:**
 
@@ -147,6 +153,11 @@ progress:
 - `.planning/phases/02-multi-client-control/02-04-SUMMARY.md` — reservation lease state machine
 - `.planning/phases/02-multi-client-control/02-05-SUMMARY.md` — audio reader, device message reader, session lifecycle wiring
 - `.planning/phases/02-multi-client-control/02-06-SUMMARY.md` — API wiring + soak test
+- `.planning/phases/03-multi-device-fleet/03-CONTEXT.md` — Phase 3 implementation decisions
+- `.planning/phases/03-multi-device-fleet/03-RESEARCH.md` — Phase 3 technical research
+- `.planning/phases/03-multi-device-fleet/03-PATTERNS.md` — Phase 3 pattern mapping
+- `.planning/phases/03-multi-device-fleet/03-VALIDATION.md` — Phase 3 validation criteria
+- `.planning/phases/03-multi-device-fleet/03-01-SUMMARY.md` — foundation primitives (ADB helpers, path validator, sentinels, SCR-07, DEV-06)
 
 ---
 *State updated: 2026-05-08 by plan 02-06 execution*
