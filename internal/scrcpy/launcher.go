@@ -67,11 +67,19 @@ type LaunchResult struct {
 	ReverseMaps []*adb.ReverseMapping
 	// SCID is the scrcpy session ID used for the device-side socket name.
 	SCID string
+	// AppProcessPID is the device-side PID of the scrcpy app_process.
+	// Populated best-effort by `pgrep -f scrcpy-server-gateway.jar` AFTER the
+	// first frame is observed (OPS-10 perf sampler hook). 0 when pgrep
+	// fails or returns nothing — perf sampler should log + skip in that case
+	// rather than abort the session.
+	AppProcessPID int
 	// Cleanup releases all resources acquired during launch in reverse order.
 	Cleanup func()
 }
 
-// LaunchOptions configures which scrcpy streams to enable.
+// LaunchOptions configures which scrcpy streams to enable and tunes the
+// scrcpy server CLI args (SCR-07). The zero value of each Phase 3 field is
+// "use the scrcpy server default" — backward-compatible with Phase 1/2.
 type LaunchOptions struct {
 	// AudioEnabled enables the audio stream. When true, the launcher accepts
 	// an audio connection after video and reads the codec ID. Per D-11, audio
@@ -81,6 +89,24 @@ type LaunchOptions struct {
 	// accepts a control connection after video (and audio, if enabled).
 	// Phase 2 sets this to true.
 	ControlEnabled bool
+
+	// --- Phase 3 SCR-07 additions. Zero value omits the arg ---
+
+	// Codec selects the video codec. One of "h264", "h265", "av1".
+	// Empty -> server default (h264).
+	Codec string
+	// MaxSize bounds the longer screen edge in pixels. 0 -> device default.
+	MaxSize int
+	// BitRate is the target video bitrate in bits/sec. 0 -> server default.
+	BitRate int
+	// MaxFPS caps the frame rate. 0 -> unlimited.
+	MaxFPS int
+	// AudioCodec selects the audio codec. One of "opus", "aac", "raw",
+	// "flac". Empty -> server default (opus).
+	AudioCodec string
+	// AudioSource selects the capture source. One of "output", "mic",
+	// "playback". Empty -> server default (output).
+	AudioSource string
 }
 
 // DefaultLaunchOptions returns options that preserve Phase 1 behavior (video-only).
@@ -146,16 +172,7 @@ func (l *Launcher) LaunchWithOptions(ctx context.Context, serial string, opts La
 	cleanupSteps = append(cleanupSteps, func() { reverseMap.Close() })
 
 	// Step 5: Launch app_process via shell:v2 with audio/control flags.
-	appProcessCmd := fmt.Sprintf(
-		"CLASSPATH=%s app_process / com.genymobile.scrcpy.Server %s "+
-			"scid=%s log_level=info "+
-			"video=true audio=%t control=%t "+
-			"send_device_meta=true send_frame_meta=true "+
-			"send_codec_meta=true send_dummy_byte=false "+
-			"cleanup=true raw_stream=false",
-		ServerJarPath, SCRCPYVersion, result.SCID,
-		opts.AudioEnabled, opts.ControlEnabled,
-	)
+	appProcessCmd := BuildAppProcessCmd(result.SCID, opts)
 	slog.Info("launching scrcpy server", "device", serial, "scid", result.SCID,
 		"audio", opts.AudioEnabled, "control", opts.ControlEnabled)
 	shellCleanup, err := l.hostServices.RunDaemonCommand(ctx, serial, appProcessCmd)
@@ -221,6 +238,10 @@ func (l *Launcher) LaunchWithOptions(ctx context.Context, serial string, opts La
 	codecID := string(codecMetaBuf[0:4])
 	width := binary.BigEndian.Uint32(codecMetaBuf[4:8])
 	height := binary.BigEndian.Uint32(codecMetaBuf[8:12])
+
+	// Step 8a (OPS-10 prereq): capture app_process PID for the perf sampler.
+	// Best-effort — failures land as PID=0 and the sampler skips silently.
+	result.AppProcessPID = captureAppProcessPID(ctx, l.hostServices, serial)
 
 	// Step 8': Audio capability probe (when audio is enabled and connection was accepted).
 	if opts.AudioEnabled && result.AudioConn != nil {
@@ -299,6 +320,95 @@ func acceptWithTimeout(ctx context.Context, ln net.Listener, name string) (net.C
 	case <-acceptCtx.Done():
 		return nil, fmt.Errorf("accept %s: timeout waiting for device to connect", name)
 	}
+}
+
+// BuildAppProcessCmd assembles the device-side shell command that launches
+// the embedded scrcpy server.jar. SCR-07 fields on opts are emitted only when
+// non-zero/non-empty so Phase 1/2 callers (which leave them at zero values)
+// produce identical CLI args as before — backward-compat is a hard contract.
+//
+// scrcpy v3.3.4 arg names are taken from
+// https://github.com/Genymobile/scrcpy/blob/v3.3.4/doc/develop.md.
+func BuildAppProcessCmd(scid string, opts LaunchOptions) string {
+	// Phase 1/2 baseline — must remain byte-identical to the prior inline
+	// fmt.Sprintf when all SCR-07 fields are zero values.
+	cmd := fmt.Sprintf(
+		"CLASSPATH=%s app_process / com.genymobile.scrcpy.Server %s "+
+			"scid=%s log_level=info "+
+			"video=true audio=%t control=%t "+
+			"send_device_meta=true send_frame_meta=true "+
+			"send_codec_meta=true send_dummy_byte=false "+
+			"cleanup=true raw_stream=false",
+		ServerJarPath, SCRCPYVersion, scid,
+		opts.AudioEnabled, opts.ControlEnabled,
+	)
+
+	// SCR-07 additions — append only when set.
+	if opts.Codec != "" {
+		cmd += " video_codec=" + opts.Codec
+	}
+	if opts.MaxSize > 0 {
+		cmd += fmt.Sprintf(" max_size=%d", opts.MaxSize)
+	}
+	if opts.BitRate > 0 {
+		cmd += fmt.Sprintf(" video_bit_rate=%d", opts.BitRate)
+	}
+	if opts.MaxFPS > 0 {
+		cmd += fmt.Sprintf(" max_fps=%d", opts.MaxFPS)
+	}
+	if opts.AudioCodec != "" {
+		cmd += " audio_codec=" + opts.AudioCodec
+	}
+	if opts.AudioSource != "" {
+		cmd += " audio_source=" + opts.AudioSource
+	}
+	return cmd
+}
+
+// captureAppProcessPID best-effort resolves the device-side PID of the
+// scrcpy server's app_process via `pgrep -f scrcpy-server-gateway.jar`.
+//
+// Strategy: scrcpy v3.3.4 does not print the app_process PID on stdout
+// pre-frame, and the merged shell-v2 stream we use to launch it doesn't
+// expose a child PID either. After the first video frame has been observed
+// (caller controls timing), we shell pgrep on the device. If multiple PIDs
+// come back (rare — would indicate a leaked prior session), pick the lowest
+// numeric PID, which is most likely the parent app_process.
+//
+// Returns 0 on any failure (pgrep absent, no match, parse error). Per the
+// plan this MUST NOT fail the launch — the perf sampler logs and skips when
+// PID is 0.
+func captureAppProcessPID(ctx context.Context, hs *adb.HostServices, serial string) int {
+	pidCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	// `pgrep -f` matches against the full command line. ServerJarPath ends
+	// in scrcpy-server-gateway.jar — match the basename to avoid leading-/.
+	out, err := hs.RunShellCommand(pidCtx, serial, "pgrep -f scrcpy-server-gateway.jar")
+	if err != nil {
+		slog.Debug("pgrep failed; PID=0", "device", serial, "error", err)
+		return 0
+	}
+	out = strings.TrimSpace(out)
+	if out == "" {
+		return 0
+	}
+	// pgrep returns one PID per line. Take the lowest as the parent.
+	lowest := 0
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		var pid int
+		if _, err := fmt.Sscanf(line, "%d", &pid); err != nil || pid <= 0 {
+			continue
+		}
+		if lowest == 0 || pid < lowest {
+			lowest = pid
+		}
+	}
+	return lowest
 }
 
 // codecString returns a human-readable representation of an AudioCodec.

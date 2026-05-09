@@ -37,6 +37,17 @@ type WSConfig struct {
 	ReadLimitBytes      int64 `koanf:"read_limit_bytes"`
 }
 
+// ScrcpyConfig holds Phase 3 SCR-07 launcher tunables. Zero values mean
+// "use the scrcpy server default" — backward compatible with Phase 1/2.
+type ScrcpyConfig struct {
+	Codec       string `koanf:"codec"`        // h264 | h265 | av1
+	MaxSize     int    `koanf:"max_size"`     // px, 0 = device default
+	BitRate     int    `koanf:"bit_rate"`     // bps, 0 = server default
+	MaxFPS      int    `koanf:"max_fps"`      // 0 = unlimited
+	AudioCodec  string `koanf:"audio_codec"`  // opus | aac | raw | flac
+	AudioSource string `koanf:"audio_source"` // output | mic | playback
+}
+
 // Config holds all gateway configuration.
 type Config struct {
 	ListenAddr      string `koanf:"listen_addr"`
@@ -48,6 +59,7 @@ type Config struct {
 	Stream          StreamConfig  `koanf:"stream"`
 	Control         ControlConfig `koanf:"control"`
 	WS              WSConfig      `koanf:"ws"`
+	Scrcpy          ScrcpyConfig  `koanf:"scrcpy"`
 }
 
 // ParseAllowedOrigins splits the comma-separated allowed_origins config value
@@ -95,7 +107,7 @@ func Load() (*Config, error) {
 	// Transform: ADB_GW_LISTEN_ADDR -> listen_addr (lowercase, strip prefix, keep underscores)
 	// For nested Phase 2 keys, the first underscore after a known parent prefix becomes a dot:
 	// ADB_GW_STREAM_VIEWER_BUFFER_FRAMES -> stream.viewer_buffer_frames
-	var nestedPrefixes = []string{"stream_", "control_", "ws_"}
+	var nestedPrefixes = []string{"stream_", "control_", "ws_", "scrcpy_"}
 	if err := k.Load(env.Provider("ADB_GW_", ".", func(s string) string {
 		key := strings.ToLower(strings.TrimPrefix(s, "ADB_GW_"))
 		for _, p := range nestedPrefixes {
@@ -145,6 +157,18 @@ func Load() (*Config, error) {
 	}
 	if !k.Exists("ws.read_limit_bytes") {
 		_ = k.Set("ws.read_limit_bytes", 4194304)
+	}
+
+	// Phase 3 SCR-07 defaults — strings default to scrcpy server defaults,
+	// numerics stay at 0 to mean "let the server decide" (backward compat).
+	if !k.Exists("scrcpy.codec") {
+		_ = k.Set("scrcpy.codec", "h264")
+	}
+	if !k.Exists("scrcpy.audio_codec") {
+		_ = k.Set("scrcpy.audio_codec", "opus")
+	}
+	if !k.Exists("scrcpy.audio_source") {
+		_ = k.Set("scrcpy.audio_source", "output")
 	}
 
 	var cfg Config

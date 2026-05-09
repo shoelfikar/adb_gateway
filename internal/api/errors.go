@@ -36,6 +36,13 @@ var (
 	ErrLeaseHeldByOther = &DomainError{Code: "LEASE_HELD_BY_OTHER", HTTPStatus: http.StatusConflict, Message: "Reservation is held by another client"}
 	ErrNotController    = &DomainError{Code: "NOT_CONTROLLER", HTTPStatus: http.StatusForbidden, Message: "Only the lease holder can send control messages"}
 	ErrAudioUnavailable = &DomainError{Code: "AUDIO_UNAVAILABLE", HTTPStatus: http.StatusNotFound, Message: "Audio stream not available for this device"}
+
+	// Phase 3 sentinels (D-19)
+	ErrPathNotAllowed  = &DomainError{Code: "PATH_NOT_ALLOWED", HTTPStatus: http.StatusForbidden, Message: "Path is outside the allowed device directories"}
+	ErrFileTooLarge    = &DomainError{Code: "FILE_TOO_LARGE", HTTPStatus: http.StatusRequestEntityTooLarge, Message: "File exceeds the maximum allowed size"}
+	ErrInstallFailed   = &DomainError{Code: "INSTALL_FAILED", HTTPStatus: http.StatusInternalServerError, Message: "Package installation failed on the device"}
+	ErrDeviceBusy      = &DomainError{Code: "DEVICE_BUSY", HTTPStatus: http.StatusServiceUnavailable, Message: "Device is busy with another operation"}
+	ErrRecordingFailed = &DomainError{Code: "RECORDING_FAILED", HTTPStatus: http.StatusInternalServerError, Message: "Screen recording failed"}
 )
 
 // errorResponse is the JSON envelope for error responses per D-07.
