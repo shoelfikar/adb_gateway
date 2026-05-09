@@ -165,6 +165,111 @@ func CreateSession(registry *session.Registry, adbClient *adb.Client, hostServic
 	}
 }
 
+// LauncherFactory produces a fresh session.Launcher per request. The
+// production wiring binds this to scrcpy.NewLauncher(adbClient, hostServices);
+// tests bind it to a stub. Introduced in Plan 03-02 so RestartSession (and
+// future Plan 03-03 endpoints that re-launch scrcpy) can be tested without
+// touching real ADB.
+type LauncherFactory func() session.Launcher
+
+// RestartSession returns an HTTP handler that recovers a sticky-Failed
+// device by transitioning Failed -> Idle -> Starting -> Active via a fresh
+// scrcpy launch. This is the manual reverse of recovery exhaustion.
+//
+// Pre-conditions:
+//   - The device entry must exist and be in StateFailed.
+//   - Any other state returns 409 Conflict (callers should DELETE the
+//     existing session first).
+//
+// Lock discipline (Pitfall 9): transition under entry.Lock() -> release ->
+// run launch -> re-acquire to commit. Mirrors CreateSession exactly.
+//
+// 03-03 handoff: this handler is exported but the route registration in
+// router.go is owned by Plan 03-03 (which also touches router.go for
+// logcat/screenshot/files). 03-03 must add:
+//
+//	r.Post("/restart", api.RestartSession(registry, cfg, launcherFactory))
+//
+// inside the /devices/{serial} route group.
+func RestartSession(registry *session.Registry, cfg *config.Config, factory LauncherFactory) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		serial := chi.URLParam(r, "serial")
+		if serial == "" || !serialPattern.MatchString(serial) {
+			writeError(w, ErrDeviceNotFound)
+			return
+		}
+
+		entry, ok := registry.Get(serial)
+		if !ok {
+			writeError(w, ErrDeviceNotFound)
+			return
+		}
+
+		// Pre-flight: only Failed devices may be restarted. Any other
+		// state means a session is in flight or already active — caller
+		// should DELETE first.
+		entry.Lock()
+		if entry.State != session.StateFailed {
+			entry.Unlock()
+			writeError(w, ErrSessionConflict)
+			return
+		}
+		// Failed -> Starting (manual recovery from sticky failed). The
+		// new session starts a fresh internal FSM at StateIdle so its
+		// Idle -> Starting -> Active chain is observable independently.
+		entry.State = session.StateStarting
+		entry.Unlock()
+
+		launchCtx, launchCancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer launchCancel()
+
+		sess := session.NewDeviceSession(serial, nil, factory(), session.SessionOpts{
+			BufFrames:      cfg.Stream.ViewerBufferFrames,
+			MaxConsecDrops: cfg.Stream.MaxConsecutiveDrops,
+			AudioEnabled:   cfg.Stream.AudioEnabled,
+		})
+
+		if err := sess.Start(launchCtx); err != nil {
+			entry.Lock()
+			entry.State = session.StateFailed
+			entry.Session = nil
+			entry.Unlock()
+
+			category := session.GetLaunchErrorCategory(err)
+			switch category {
+			case "PUSH_FAILED":
+				writeError(w, ErrPushFailed)
+			case "REVERSE_FORWARD_FAILED":
+				writeError(w, ErrReverseForwardFailed)
+			case "ADB_UNAVAILABLE":
+				writeError(w, ErrADBUnavailable)
+			default:
+				writeError(w, ErrScrcpyLaunchFailed)
+			}
+			return
+		}
+
+		entry.Lock()
+		// Re-validate: ADB disconnect or external state change may have
+		// re-failed us during the lock-free launch.
+		if entry.State != session.StateStarting {
+			entry.Unlock()
+			sess.Close(context.Background())
+			writeError(w, ErrADBUnavailable)
+			return
+		}
+		entry.Session = sess
+		entry.State = session.StateActive
+		entry.Unlock()
+
+		writeJSON(w, http.StatusCreated, sessionResponse{
+			ID:     sess.ID,
+			Serial: serial,
+			State:  session.StateActive.String(),
+		})
+	}
+}
+
 // DeleteSession returns an HTTP handler that ends a session for a device.
 // Verifies the session ID matches before closing. Per DEV-04: cancels context,
 // removes reverse forwards, kills app_process.

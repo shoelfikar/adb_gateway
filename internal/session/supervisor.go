@@ -18,6 +18,7 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/pelni/adb-gateway/internal/adb"
+	"github.com/pelni/adb-gateway/internal/obs"
 	"github.com/pelni/adb-gateway/internal/scrcpy"
 )
 
@@ -81,6 +82,17 @@ type DeviceSession struct {
 	maxConsecDrops int
 	audioEnabled   bool
 
+	// Phase 3 (Plan 03-02): captured LaunchOptions used at the most recent
+	// successful launch. Recovery re-uses these to re-issue scrcpy on the
+	// same DeviceSession. Read under s.mu via LaunchOptions().
+	launchOpts scrcpy.LaunchOptions
+
+	// Phase 3 (Plan 03-02): watchdog + recovery wiring. Both are optional —
+	// when nil, Run skips the watchdog goroutine. Tests that don't need
+	// stall recovery construct a session without setting these.
+	watchdog *StallWatchdog
+	recovery *Recovery
+
 	// Dependencies injected at creation.
 	adbClient *adb.Client
 	launcher  Launcher
@@ -118,10 +130,12 @@ func (s *DeviceSession) Start(ctx context.Context) error {
 	s.state = newState
 	s.log.Info("session starting")
 
-	result, err := s.launcher.LaunchWithOptions(ctx, s.Serial, scrcpy.LaunchOptions{
+	opts := scrcpy.LaunchOptions{
 		AudioEnabled:   s.audioEnabled,
 		ControlEnabled: true,
-	})
+	}
+	s.launchOpts = opts // remember for Recovery re-launch
+	result, err := s.launcher.LaunchWithOptions(ctx, s.Serial, opts)
 	if err != nil {
 		s.state = StateFailed
 		s.log.Error("scrcpy launch failed", "error", err)
@@ -267,7 +281,15 @@ func (s *DeviceSession) Run(ctx context.Context) error {
 		g.Go(func() error { return s.audioReaderLoop(ctx, audioConn) })
 	}
 
-	// 3. Control Writer + Device Message Reader (on the same conn).
+	// 3. Plan 03-02: stall watchdog (per-device) — runs only when one was
+	// attached via SetStallWatchdog. The watchdog reads VideoHub.FrameCount
+	// lock-free; onStall (if recovery is wired) spawns Recovery.Run on a
+	// separate goroutine so the watchdog stays responsive to ctx cancel.
+	if s.watchdog != nil {
+		g.Go(func() error { return s.watchdog.Run(ctx) })
+	}
+
+	// 4. Control Writer + Device Message Reader (on the same conn).
 	if controlConn != nil {
 		s.controlWriter = scrcpy.NewControlWriter(scrcpy.ControlWriterOpts{
 			Conn:       controlConn,
@@ -423,6 +445,67 @@ func (s *DeviceSession) SetControlWriterForTest(cw *scrcpy.ControlWriter) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.controlWriter = cw
+}
+
+// AttachStallRecovery wires the Plan 03-02 watchdog + recovery pair onto
+// this session. Must be called BEFORE Run. The watchdog observes
+// VideoHub.FrameCount; on stall it spawns recovery.Run on a fresh
+// background context so a normal Run-ctx cancel (DELETE /sessions) does
+// NOT terminate an in-flight recovery — recovery itself observes the
+// passed ctx and transitions to Stopping/Failed appropriately.
+//
+// recoveryCtx is the context the recovery loop uses (typically a
+// context.Background-derived context owned by the registry, not the
+// per-Run errgroup ctx). Pass nil to use context.Background().
+func (s *DeviceSession) AttachStallRecovery(rec *Recovery, w *StallWatchdog, recoveryCtx context.Context) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.recovery = rec
+	if recoveryCtx == nil {
+		recoveryCtx = context.Background()
+	}
+	// The watchdog's onStall trampoline must close over `recoveryCtx`, not
+	// the supervisor's per-Run ctx, so recovery survives a benign DELETE.
+	if w != nil && rec != nil {
+		// We allocate a copy here that delegates onStall.
+		s.watchdog = NewStallWatchdog(StallWatchdogOpts{
+			Counter:   w.counter,
+			Interval:  w.interval,
+			Threshold: w.threshold,
+			Log:       w.log,
+			OnStall: func() {
+				go func() {
+					if err := rec.Run(recoveryCtx, s); err != nil {
+						s.log.Warn("recovery: terminal", "error", err)
+					}
+				}()
+			},
+		})
+	} else {
+		s.watchdog = w
+	}
+}
+
+// LaunchOptions returns the scrcpy LaunchOptions captured at the most recent
+// successful Start. Plan 03-02 Recovery re-uses these to re-launch scrcpy on
+// the same DeviceSession (preserving SCID, audio/control settings, codec).
+func (s *DeviceSession) LaunchOptions() scrcpy.LaunchOptions {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.launchOpts
+}
+
+// transitionLocked atomically transitions the session FSM and emits the
+// gateway_session_state Prometheus gauge. The caller MUST hold s.mu.
+// Returns the new state on success.
+func (s *DeviceSession) transitionLocked(target SessionState) (SessionState, error) {
+	next, err := TransitionTo(s.state, target)
+	if err != nil {
+		return s.state, err
+	}
+	s.state = next
+	obs.SetSessionState(s.Serial, next.String())
+	return next, nil
 }
 
 // Existing Phase 1 accessors.

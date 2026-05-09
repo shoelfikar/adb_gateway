@@ -51,11 +51,30 @@ func TestMetricsCardinalityLock(t *testing.T) {
 	require.NoError(t, err)
 	// Check that label declarations don't include forbidden high-cardinality labels.
 	// We check for label declarations in the var block, not in comments.
+	//
+	// Plan 03-02 (DEV-05) carve-out: gateway_session_state intentionally
+	// adds device_serial per CONTEXT.md "Claude's Discretion". The D-18
+	// cardinality lock applies to BASELINE collectors only — Phase 3
+	// per-device gauges are explicitly exempt.
 	lines := strings.Split(string(body), "\n")
+	inSessionStateBlock := false
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
 		// Skip comment lines
 		if strings.HasPrefix(trimmed, "//") || strings.HasPrefix(trimmed, "/*") {
+			continue
+		}
+		// Track entry/exit of the gateway_session_state declaration block.
+		// Enter on the Name line; exit on the closing `})` of the
+		// NewGaugeVec call (which is also the line carrying the labels).
+		if strings.Contains(trimmed, `Name: "gateway_session_state"`) {
+			inSessionStateBlock = true
+			continue
+		}
+		if inSessionStateBlock {
+			if strings.HasSuffix(trimmed, "})") {
+				inSessionStateBlock = false
+			}
 			continue
 		}
 		for _, forbidden := range []string{"device_serial", "viewer_id", "session_id"} {
