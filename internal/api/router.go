@@ -49,8 +49,14 @@ func NewRouter(cfg *config.Config, registry *session.Registry, adbClient *adb.Cl
 				r.Patch("/reservation", ExtendReservation(registry))
 				r.Delete("/reservation", ReleaseReservation(registry))
 
-				// Phase 3 Plan 03-03 logcat WS (OPS-05).
-				r.Get("/logcat", StreamLogcat(registry, origins, cfg))
+				// Phase 3 Plan 03-03 endpoints.
+				r.Get("/logcat", StreamLogcat(registry, origins, cfg))             // OPS-05
+				r.Post("/screenshot", CaptureScreenshot(registry, hostServices, cfg)) // OPS-06
+				r.Route("/files", func(r chi.Router) {                              // OPS-08
+					r.Post("/", UploadFile(registry, hostServices, cfg))
+					r.Get("/", DownloadFile(registry, hostServices, cfg))
+					r.Delete("/", DeleteFile(registry, hostServices, cfg))
+				})
 
 				// Phase 3 Plan 03-02 handoff: manual restart of a sticky-Failed
 				// device. The launcher factory is constructed per call so a

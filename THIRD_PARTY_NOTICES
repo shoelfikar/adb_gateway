@@ -109,3 +109,23 @@ Source: https://github.com/stretchr/testify
 License: MIT License (https://opensource.org/licenses/MIT)
 
 Copyright (c) 2012-2018 stretchr
+
+--- HugoSmits86/nativewebp ---
+
+This software includes github.com/HugoSmits86/nativewebp, licensed under the MIT License.
+
+Version: v1.2.1
+Source: https://github.com/HugoSmits86/nativewebp
+License: MIT License (https://opensource.org/licenses/MIT)
+
+Copyright (c) 2024 Hugo Smits
+
+--- golang.org/x/time ---
+
+This software includes golang.org/x/time, licensed under the BSD-3-Clause License.
+
+Version: v0.15.0
+Source: https://github.com/golang/time
+License: BSD-3-Clause License (https://opensource.org/licenses/BSD-3-Clause)
+
+Copyright (c) 2009 The Go Authors. All rights reserved.
