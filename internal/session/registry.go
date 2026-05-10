@@ -3,10 +3,13 @@ package session
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/pelni/adb-gateway/internal/adb"
 )
@@ -29,7 +32,61 @@ type DeviceEntry struct {
 	// hold the device mutex during a long ADB call).
 	InstallInFlight atomic.Bool
 
+	// Recordings holds active screen recordings keyed by recording_id.
+	// Phase 3 Plan 03-04 limits one active recording per device (a
+	// concurrent POST returns 503 DEVICE_BUSY); the map shape allows
+	// future relaxation. Allocated lazily by AddRecording.
+	Recordings map[uuid.UUID]*recordingHandle
 }
+
+// recordingHandle pairs an active *Recording with its CancelFunc.
+type recordingHandle struct {
+	Rec    *Recording
+	Cancel context.CancelFunc
+}
+
+// AddRecording stores a recording handle on the entry. Returns ErrRecordingBusy
+// if another recording is already active.
+func (e *DeviceEntry) AddRecording(rec *Recording, cancel context.CancelFunc) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.Recordings == nil {
+		e.Recordings = make(map[uuid.UUID]*recordingHandle)
+	}
+	if len(e.Recordings) > 0 {
+		return ErrRecordingBusy
+	}
+	e.Recordings[rec.ID()] = &recordingHandle{Rec: rec, Cancel: cancel}
+	return nil
+}
+
+// GetRecording returns the handle for a recording_id, or nil if not found.
+func (e *DeviceEntry) GetRecording(id uuid.UUID) *recordingHandle {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.Recordings[id]
+}
+
+// RemoveRecording deletes a recording handle. Idempotent.
+func (e *DeviceEntry) RemoveRecording(id uuid.UUID) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	delete(e.Recordings, id)
+}
+
+// ListRecordings returns a snapshot of active recordings on this entry.
+func (e *DeviceEntry) ListRecordings() []*Recording {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	out := make([]*Recording, 0, len(e.Recordings))
+	for _, h := range e.Recordings {
+		out = append(out, h.Rec)
+	}
+	return out
+}
+
+// ErrRecordingBusy means a recording is already active on this device.
+var ErrRecordingBusy = errors.New("recording already active for this device")
 
 // Lock acquires the per-device mutex. Used by external packages (e.g., api handlers)
 // that need to read/modify DeviceEntry fields atomically.

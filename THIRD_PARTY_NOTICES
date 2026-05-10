@@ -129,3 +129,15 @@ Source: https://github.com/golang/time
 License: BSD-3-Clause License (https://opensource.org/licenses/BSD-3-Clause)
 
 Copyright (c) 2009 The Go Authors. All rights reserved.
+--- at-wat/ebml-go ---
+
+This software includes github.com/at-wat/ebml-go, licensed under the Apache License, Version 2.0.
+
+Version: v0.18.0
+Source: https://github.com/at-wat/ebml-go
+License: Apache License, Version 2.0 (https://www.apache.org/licenses/LICENSE-2.0)
+
+Copyright 2019 The ebml-go authors.
+
+Used for: Phase 3 Plan 03-04 screen recording — MKV (Matroska) muxer
+backing internal/session/recording.go via the mkvcore subpackage.

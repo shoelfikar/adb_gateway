@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -62,7 +63,7 @@ func minimalPFrame(seq byte) []byte {
 
 func TestRecordingHappyPath(t *testing.T) {
 	dir := t.TempDir()
-	hub := newTestHub(t, "video")
+	hub := newRecordingTestHub(t, "video")
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go func() { _ = hub.Run(ctx) }()
@@ -125,9 +126,9 @@ func parseAndPackFrame(t *testing.T, wire []byte) *Frame {
 	}
 }
 
-// newTestHub builds a hub with sane defaults for tests. The hub's Run goroutine
-// is started by the caller.
-func newTestHub(t *testing.T, stream string) *Hub {
+// newRecordingTestHub builds a hub with sane defaults for recording tests.
+// The hub's Run goroutine is started by the caller.
+func newRecordingTestHub(t *testing.T, stream string) *Hub {
 	t.Helper()
 	hub := NewHub(HubOpts{
 		Stream:              stream,
@@ -140,11 +141,14 @@ func newTestHub(t *testing.T, stream string) *Hub {
 }
 
 func TestRecordingSlowConsumer(t *testing.T) {
-	// Build a Hub with very small buffer + low drop threshold so the
-	// recorder is evicted quickly.
+	// Build a Hub with small recorder buffer + low drop threshold so the
+	// recorder evicts quickly. The healthy viewer gets a generous buffer
+	// because it shares Hub.bufFrames with the recorder — the drop-on-slow
+	// policy triggers per-viewer based on consecutive-drops, so a fast
+	// healthy goroutine never accumulates 3 consecutive drops.
 	hub := NewHub(HubOpts{
 		Stream:              "video",
-		BufFrames:           2,
+		BufFrames:           4,
 		MaxConsecutiveDrops: 3,
 		Log:                 slog.Default(),
 	})
@@ -157,13 +161,27 @@ func TestRecordingSlowConsumer(t *testing.T) {
 	dir := t.TempDir()
 	id := uuid.New()
 
-	// Inject a stub muxer that BLOCKS on Write so the recorder cannot drain
-	// its sub channel.
-	blockMux := newBlockingMuxer()
+	// Drain the healthy viewer FIRST (subscribed before the recorder), so
+	// the goroutine is already running when the recorder blocks.
+	viewerCh, unsub, err := hub.Subscribe("healthy-viewer")
+	require.NoError(t, err)
+	defer unsub()
+	var healthyCount atomic.Int64
+	healthyDone := make(chan struct{})
+	go func() {
+		defer close(healthyDone)
+		for range viewerCh {
+			healthyCount.Add(1)
+		}
+	}()
+
+	// Inject a slow muxer (each WriteFrame sleeps long enough that the
+	// recorder cannot keep up — chan fills, Hub evicts).
+	slowMux := newSlowMuxer(50 * time.Millisecond)
 	rec, err := NewRecording(hub, id, "ABC123", dir, RecordingOpts{
 		MaxFileBytes: 0,
 		Log:          slog.Default(),
-		MuxerFactory: func(_ string) (recordingMuxer, error) { return blockMux, nil },
+		MuxerFactory: func(_ string) (recordingMuxer, error) { return slowMux, nil },
 	})
 	require.NoError(t, err)
 
@@ -171,36 +189,18 @@ func TestRecordingSlowConsumer(t *testing.T) {
 	defer recCancel()
 	runDone := make(chan error, 1)
 	go func() { runDone <- rec.Run(recCtx) }()
+	time.Sleep(20 * time.Millisecond) // let recorder hit the blocking muxer
 
-	// Also subscribe a healthy viewer — it MUST keep receiving frames after
-	// the recorder is evicted (D-18 architectural insurance).
-	viewerCh, unsub, err := hub.Subscribe("healthy-viewer")
-	require.NoError(t, err)
-	defer unsub()
-
-	// Drain healthy viewer in background to keep it healthy.
-	healthyDone := make(chan int, 1)
-	go func() {
-		count := 0
-		for range viewerCh {
-			count++
-			if count >= 10 {
-				healthyDone <- count
-				return
-			}
-		}
-		healthyDone <- count
-	}()
-
-	// Hammer 100 frames into the Hub.
+	// Hammer frames into the Hub — fast enough to overflow the recorder's
+	// 4-buffer chan but slow enough that the healthy viewer keeps draining.
 	idrPayload := append(append(minimalSPS(), minimalPPS()...), minimalIDR()...)
-	for i := 0; i < 100; i++ {
+	for i := 0; i < 200; i++ {
 		hub.Publish(&Frame{
 			Header:   buildHeader(uint64(i+1)*1000, len(idrPayload), i%5 == 0),
 			Payload:  idrPayload,
 			KeyFrame: i%5 == 0,
 		})
-		time.Sleep(2 * time.Millisecond)
+		time.Sleep(1 * time.Millisecond)
 	}
 
 	// Recording must terminate with ErrRecordingFailed (slow-disk eviction).
@@ -212,13 +212,10 @@ func TestRecordingSlowConsumer(t *testing.T) {
 		t.Fatal("recording did not exit after Hub eviction")
 	}
 
-	// Healthy viewer should have received ≥10 frames despite slow recorder.
-	select {
-	case got := <-healthyDone:
-		assert.GreaterOrEqual(t, got, 10, "healthy viewer must keep receiving frames while recorder is evicted")
-	case <-time.After(2 * time.Second):
-		t.Fatal("healthy viewer did not receive enough frames — recorder back-pressured the Hub (BUG)")
-	}
+	// Healthy viewer must have received ≥10 frames despite slow recorder
+	// (D-18 insurance — drop-on-slow is per-viewer).
+	got := healthyCount.Load()
+	assert.GreaterOrEqual(t, got, int64(10), "healthy viewer must keep receiving frames while recorder is evicted; got=%d", got)
 }
 
 func buildHeader(pts uint64, size int, keyframe bool) [12]byte {
@@ -231,38 +228,40 @@ func buildHeader(pts uint64, size int, keyframe bool) [12]byte {
 	return h
 }
 
-// blockingMuxer always blocks on WriteFrame until released. Used to
-// simulate a slow disk in TestRecordingSlowConsumer.
-type blockingMuxer struct {
-	mu       sync.Mutex
-	released chan struct{}
+// slowMuxer simulates a slow disk: each WriteFrame sleeps for `perWriteDelay`
+// before returning. While the muxer is sleeping, the recorder's r.sub chan
+// fills, Hub evicts. The next read sees the closed chan and Run exits.
+type slowMuxer struct {
+	perWriteDelay time.Duration
+	mu            sync.Mutex
+	closed        bool
 }
 
-func newBlockingMuxer() *blockingMuxer {
-	return &blockingMuxer{released: make(chan struct{})}
+func newSlowMuxer(d time.Duration) *slowMuxer {
+	return &slowMuxer{perWriteDelay: d}
 }
 
-func (m *blockingMuxer) WriteFrame(_ context.Context, _ bool, _ uint64, _ []byte) (int, error) {
-	<-m.released
-	return 0, errors.New("blockingMuxer: never returns")
+func (m *slowMuxer) WriteFrame(ctx context.Context, _ bool, _ uint64, payload []byte) (int, error) {
+	select {
+	case <-time.After(m.perWriteDelay):
+		return len(payload), nil
+	case <-ctx.Done():
+		return 0, ctx.Err()
+	}
 }
 
-func (m *blockingMuxer) WriteTrackHeader(_ []byte, _ []byte) error { return nil }
+func (m *slowMuxer) WriteTrackHeader(_ []byte, _ []byte) error { return nil }
 
-func (m *blockingMuxer) Close() error {
+func (m *slowMuxer) Close() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	select {
-	case <-m.released:
-	default:
-		close(m.released)
-	}
+	m.closed = true
 	return nil
 }
 
 func TestRecordingRotation(t *testing.T) {
 	dir := t.TempDir()
-	hub := newTestHub(t, "video")
+	hub := newRecordingTestHub(t, "video")
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go func() { _ = hub.Run(ctx) }()
@@ -280,11 +279,13 @@ func TestRecordingRotation(t *testing.T) {
 	runDone := make(chan error, 1)
 	go func() { runDone <- rec.Run(recCtx) }()
 
-	// Big payload to trigger rotation quickly.
-	bigPayload := make([]byte, 200)
-	for i := range bigPayload {
-		bigPayload[i] = 0x9a
+	// Big P-frame body to trigger rotation quickly. Wrap it as a proper
+	// Annex-B NALU so splitAnnexB / annexBToAVCC pick it up.
+	bigBody := make([]byte, 200)
+	for i := range bigBody {
+		bigBody[i] = 0x9a
 	}
+	bigPayload := makeAnnexBNALU(0x41, bigBody) // P-slice NALU
 	idrPayload := append(append(minimalSPS(), minimalPPS()...), minimalIDR()...)
 	hub.Publish(parseAndPackFrame(t, makeFrameWire(1000, true, idrPayload)))
 	for i := uint64(2); i <= 10; i++ {
