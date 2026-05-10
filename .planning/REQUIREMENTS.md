@@ -79,10 +79,10 @@ Requirements for initial release. Each maps to exactly one roadmap phase.
 - [ ] **OPS-02**: A health monitor per device watches frame-flow liveness; flat counter for >30s triggers auto-recovery (restart `app_process`, then re-attach reverse tunnels)
 - [ ] **OPS-03**: Per-device reaper goroutine cleans up resources on session end / device disconnect (no goroutine or FD leaks)
 - [ ] **OPS-04**: Each session uses ephemerally-allocated reverse-forward ports (not fixed 27183/4/5), so multiple sessions on different devices don't collide
-- [ ] **OPS-05**: REST `GET /devices/{serial}/logcat` returns a streaming logcat (chunked or WS) with a configurable per-device retention buffer
-- [ ] **OPS-06**: REST `POST /devices/{serial}/screenshot` returns a single PNG via the screencap shell command
+- [x] **OPS-05**: REST `GET /devices/{serial}/logcat` returns a streaming logcat (chunked or WS) with a configurable per-device retention buffer
+- [x] **OPS-06**: REST `POST /devices/{serial}/screenshot` returns a single PNG via the screencap shell command
 - [ ] **OPS-07**: REST `POST /devices/{serial}/apks` installs an APK via `adb install` (sync push + `pm install`); returns success/failure with stderr
-- [ ] **OPS-08**: REST `POST/GET/DELETE /devices/{serial}/files` push, pull, delete files via the ADB sync service
+- [x] **OPS-08**: REST `POST/GET/DELETE /devices/{serial}/files` push, pull, delete files via the ADB sync service
 - [ ] **OPS-09**: REST `POST /devices/{serial}/recordings` starts a recording; the gateway tees frames to disk (mp4/mkv) without re-encoding; `DELETE` stops; `GET` lists/downloads
 - [ ] **OPS-10**: Per-device performance metrics (CPU%, mem MB, FPS observed) are sampled at a configurable interval (default 5s) and exposed via Prometheus
 
@@ -205,10 +205,10 @@ Each v1 requirement is mapped to exactly one phase. See `.planning/ROADMAP.md` f
 | OPS-02 | Phase 3 | Pending |
 | OPS-03 | Phase 3 | Pending |
 | OPS-04 | Phase 3 | Pending |
-| OPS-05 | Phase 3 | Pending |
-| OPS-06 | Phase 3 | Pending |
+| OPS-05 | Phase 3 | Shipped (03-03) |
+| OPS-06 | Phase 3 | Shipped (03-03) |
 | OPS-07 | Phase 3 | Pending |
-| OPS-08 | Phase 3 | Pending |
+| OPS-08 | Phase 3 | Shipped (03-03) |
 | OPS-09 | Phase 3 | Pending |
 | OPS-10 | Phase 3 | Pending |
 | **_Observability_** | | |

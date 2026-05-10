@@ -3,41 +3,41 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-last_updated: "2026-05-09T00:00:00.000Z"
+last_updated: "2026-05-10T00:00:00.000Z"
 progress:
   total_phases: 4
   completed_phases: 2
   total_plans: 18
-  completed_plans: 16
-  percent: 89
+  completed_plans: 17
+  percent: 94
 ---
 
 # Project State: ADB Gateway
 
 **Initialized:** 2026-05-06
 **Mode:** YOLO, sequential, standard granularity
-**Last updated:** 2026-05-09 (Phase 3 plan 02 complete — FSM watchdog & recovery shipped)
+**Last updated:** 2026-05-10 (Phase 3 plan 03 complete — logcat / screenshot / files shipped)
 
 ## Project Reference
 
 **Core value:** Reliable, low-latency streaming and control of many physical Android devices, exposed as a clean API that `pelni_server` can embed without needing to understand ADB or scrcpy internals.
 
-**Current focus:** Phase 3 — Multi-Device Fleet — IN PROGRESS. Plans 03-01 and 03-02 complete. 03-02 shipped FSM `StateReconnecting`, Hub atomic frame counter, stall watchdog (5s × 5 = 25s detection), backoff-capped recovery orchestrator (3 attempts → sticky failed), `gateway_session_state` one-hot Prometheus gauge, and `RestartSession` handler (route registration handed off to 03-03).
+**Current focus:** Phase 3 — Multi-Device Fleet — IN PROGRESS. Plans 03-01, 03-02, 03-03 complete. 03-03 shipped per-device LogcatBuffer (10000-line ring), `/logcat` WS handler with snapshot-then-live-tail and slow-consumer eviction, `/screenshot` WebP endpoint (nativewebp lossless — A3 resolved), `/files` POST/GET/DELETE with allowlist + 500MB cap + path-traversal hardening (zero-ADB-call invariant tested), and registration of the 03-02 manual `/restart` route. Requirements shipped this plan: OPS-05, OPS-06, OPS-08.
 
 ## Current Position
 
 | Field | Value |
 |-------|-------|
 | Phase | 3 — Multi-Device Fleet |
-| Plan | 03-01, 03-02 complete; 03-03..03-04 pending |
+| Plan | 03-01, 03-02, 03-03 complete; 03-04 pending |
 | Status | executing |
-| Phase progress | 2/4 plans complete |
-| Overall progress | 2/4 phases complete + 2 Phase 3 plans |
+| Phase progress | 3/4 plans complete |
+| Overall progress | 2/4 phases complete + 3 Phase 3 plans |
 
 ```
 [██████████] 100%  Phase 1 (8/8 plans complete)
 [██████████] 100%  Phase 2 (6/6 plans complete)
-[█████░░░░░] 50%   Phase 3 (2/4 plans complete)
+[████████░░] 75%   Phase 3 (3/4 plans complete)
 [░░░░░░░░░░] 0%   Phase 4
 ```
 
@@ -46,8 +46,8 @@ progress:
 | Metric | Value |
 |--------|-------|
 | Phases completed | 2 |
-| Plans completed | 16 (01-01..01-08, 02-01..02-06, 03-01, 03-02) |
-| Requirements shipped | 4 / 68 (SCR-07, DEV-06, DEV-05, OPS-02) |
+| Plans completed | 17 (01-01..01-08, 02-01..02-06, 03-01, 03-02, 03-03) |
+| Requirements shipped | 7 / 68 (SCR-07, DEV-06, DEV-05, OPS-02, OPS-05, OPS-06, OPS-08) |
 | Validated requirements | 0 |
 | Decisions logged | 8 (in PROJECT.md Key Decisions, all `— Pending`) |
 
@@ -135,9 +135,9 @@ progress:
 
 ## Session Continuity
 
-**Last action:** Plan 03-02 executed — `StateReconnecting` added to session FSM with `Active <-> Reconnecting -> {Active,Failed,Stopping}` edges; `Hub.frameCount atomic.Uint64` + `FrameCount()` for lock-free polling; `StallWatchdog` (Interval=5s × Threshold=5 = 25s detection, first-frame gate per Pitfall 2, single-fire-per-stall); `Recovery` orchestrator on `cenkalti/backoff/v4` with `WithMaxRetries(bo, 2)` (3 attempts) and lock-discipline-safe relaunch; `gateway_session_state{device_serial,state}` one-hot Prometheus GaugeVec with `SetSessionState` helper; `DeviceSession.AttachStallRecovery` (opt-in) + `transitionLocked` funnel that stamps the gauge; `api.RestartSession` handler + `LauncherFactory` type for Failed→Idle→Starting→Active manual recovery (route registration deferred to 03-03 to avoid wave-2 router.go conflict). All `go test -race ./internal/session/... ./internal/api/... ./internal/obs/...` green. DEV-05 + OPS-02 satisfied; ROADMAP success criterion #2 first half (auto-recovery) shipped.
+**Last action:** Plan 03-03 executed — `LogcatBuffer` 10000-line ring with atomic Subscribe-with-snapshot and drop-on-slow eviction; `logcatReaderLoop` runs `logcat -v threadtime` under per-device errgroup with cenkalti/backoff (1s..30s) and Pitfall 1 mitigation (suppresses non-ctx errors so logcat EOF cannot kill video/audio siblings); `StreamLogcat` WS handler accepts StateActive AND StateReconnecting (Pitfall 1 — buffer survives recovery); `CaptureScreenshot` POST endpoint with `screencap -p` -> `png.Decode` -> `nativewebp.Encode` (A3 RESOLVED — v1.2.1 ships only lossless `Encode`; we set `X-WebP-Mode: lossless-fallback` per the D-07 fallback contract); per-API-key token-bucket rate limit via `golang.org/x/time/rate` (Pitfall 4); `UploadFile`/`DownloadFile`/`DeleteFile` POST/GET/DELETE with `ValidateDevicePath` BEFORE every ADB call (security invariant TestFilesPathTraversal asserts zero ADB calls for traversal inputs), `http.MaxBytesReader`-capped uploads (500 MiB default), `shellQuote` defence-in-depth on DELETE; router wires `/logcat`, `/screenshot`, `/files {POST,GET,DELETE}`, and the 03-02 handoff `/restart` route. THIRD_PARTY_NOTICES updated with `HugoSmits86/nativewebp` (MIT) and `golang.org/x/time` (BSD-3). All `go test -race` packages green; OPS-05 + OPS-06 + OPS-08 satisfied.
 
-**Next action:** Plan 03-03 (logcat / screenshot / files + register POST /devices/{serial}/restart route per 03-02 handoff)
+**Next action:** Plan 03-04 (APK install + recording — last Phase 3 wave)
 
 **Files of record:**
 
@@ -159,6 +159,7 @@ progress:
 - `.planning/phases/03-multi-device-fleet/03-VALIDATION.md` — Phase 3 validation criteria
 - `.planning/phases/03-multi-device-fleet/03-01-SUMMARY.md` — foundation primitives (ADB helpers, path validator, sentinels, SCR-07, DEV-06)
 - `.planning/phases/03-multi-device-fleet/03-02-SUMMARY.md` — FSM watchdog & recovery (StateReconnecting, stall watchdog, backoff recovery, gateway_session_state gauge, RestartSession handler — 03-03 route handoff)
+- `.planning/phases/03-multi-device-fleet/03-03-SUMMARY.md` — logcat / screenshot / files (LogcatBuffer, /logcat WS, /screenshot WebP A3-resolved, /files POST/GET/DELETE with allowlist + traversal hardening, /restart route registration)
 
 ---
-*State updated: 2026-05-08 by plan 02-06 execution*
+*State updated: 2026-05-10 by plan 03-03 execution*

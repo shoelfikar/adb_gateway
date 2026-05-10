@@ -98,8 +98,8 @@ Plans:
 | Plan | Status | Summary |
 |------|--------|---------|
 | 03-01 foundation-primitives | done (2026-05-09) | ADB streaming helpers, path validator (D-11), 5 Phase 3 sentinels, SCR-07 LaunchOptions, AppProcessPID via pgrep, ScrcpyConfig koanf keys, DEV-06 audit. Requirements shipped: SCR-07, DEV-06. |
-| 03-02 fsm-watchdog-recovery | pending | — |
-| 03-03 logcat-screenshot-files | pending | — |
+| 03-02 fsm-watchdog-recovery | done (2026-05-09) | StateReconnecting + Hub frame counter, stall watchdog (5s × 5 = 25s), backoff-capped recovery (3 attempts, sticky failed), gateway_session_state gauge, RestartSession handler. Requirements shipped: DEV-05, OPS-02. |
+| 03-03 logcat-screenshot-files | done (2026-05-10) | LogcatBuffer + supervisor wiring, /logcat WS, /screenshot (nativewebp lossless, A3 resolved), /files POST/GET/DELETE with allowlist + 500MB cap, /restart route registration. Requirements shipped: OPS-05, OPS-06, OPS-08. |
 | 03-04 apk-recording | pending | — |
 
 ### Phase 4: Horizontal Scaling
