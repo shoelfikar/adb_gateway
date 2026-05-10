@@ -9,6 +9,7 @@ import (
 
 	"github.com/pelni/adb-gateway/internal/adb"
 	"github.com/pelni/adb-gateway/internal/config"
+	"github.com/pelni/adb-gateway/internal/scrcpy"
 	"github.com/pelni/adb-gateway/internal/session"
 )
 
@@ -47,6 +48,17 @@ func NewRouter(cfg *config.Config, registry *session.Registry, adbClient *adb.Cl
 				r.Post("/reservation", CreateReservation(registry))
 				r.Patch("/reservation", ExtendReservation(registry))
 				r.Delete("/reservation", ReleaseReservation(registry))
+
+				// Phase 3 Plan 03-03 logcat WS (OPS-05).
+				r.Get("/logcat", StreamLogcat(registry, origins, cfg))
+
+				// Phase 3 Plan 03-02 handoff: manual restart of a sticky-Failed
+				// device. The launcher factory is constructed per call so a
+				// fresh launcher binds to the current adbClient/hostServices.
+				factory := LauncherFactory(func() session.Launcher {
+					return scrcpy.NewLauncher(adbClient, hostServices)
+				})
+				r.Post("/restart", RestartSession(registry, cfg, factory))
 			})
 		})
 	})

@@ -35,6 +35,9 @@ type SessionOpts struct {
 	BufFrames      int // = cfg.Stream.ViewerBufferFrames
 	MaxConsecDrops int // = cfg.Stream.MaxConsecutiveDrops
 	AudioEnabled   bool
+	// LogcatCapacity is the per-device logcat ring buffer size in lines
+	// (Plan 03-03). Zero means "use the LogcatBuffer default" (10000).
+	LogcatCapacity int
 }
 
 // DefaultSessionOpts returns reasonable defaults for Phase 1 compatibility.
@@ -93,6 +96,13 @@ type DeviceSession struct {
 	watchdog *StallWatchdog
 	recovery *Recovery
 
+	// Phase 3 (Plan 03-03): per-device logcat ring buffer (OPS-05). Set by
+	// the supervisor on session start. Survives a logcat-process restart so
+	// late-joining /logcat WS subscribers always see the full ring.
+	logcatBuffer   *LogcatBuffer
+	logcatRunner   LogcatShellRunner
+	logcatCapacity int
+
 	// Dependencies injected at creation.
 	adbClient *adb.Client
 	launcher  Launcher
@@ -113,6 +123,7 @@ func NewDeviceSession(serial string, adbClient *adb.Client, launcher Launcher, o
 		bufFrames:      opts.BufFrames,
 		maxConsecDrops: opts.MaxConsecDrops,
 		audioEnabled:   opts.AudioEnabled,
+		logcatCapacity: opts.LogcatCapacity,
 	}
 }
 
@@ -156,6 +167,17 @@ func (s *DeviceSession) Start(ctx context.Context) error {
 	s.controlConn = result.ControlConn
 	s.audioAvailable = result.AudioAvailable
 	s.audioCodec = result.AudioCodec
+
+	// Plan 03-03 OPS-05: allocate the per-device logcat buffer on session
+	// start so that any /logcat WS request received in the same Active
+	// window sees a valid buffer. The reader goroutine (if a runner is
+	// attached) starts in Run and Appends into this buffer.
+	if s.logcatBuffer == nil {
+		s.logcatBuffer = NewLogcatBuffer(LogcatBufferOpts{
+			Capacity: s.logcatCapacity,
+			Log:      s.log,
+		})
+	}
 
 	s.state = StateActive
 	s.log.Info("session active",
@@ -233,7 +255,12 @@ func (s *DeviceSession) cleanupResources() {
 		s.reverseMap = nil
 		s.audioConn = nil
 		s.controlConn = nil
+		buf := s.logcatBuffer
+		s.logcatBuffer = nil
 		s.mu.Unlock()
+		if buf != nil {
+			buf.Shutdown()
+		}
 	}
 }
 
@@ -287,6 +314,13 @@ func (s *DeviceSession) Run(ctx context.Context) error {
 	// separate goroutine so the watchdog stays responsive to ctx cancel.
 	if s.watchdog != nil {
 		g.Go(func() error { return s.watchdog.Run(ctx) })
+	}
+
+	// Plan 03-03: per-device logcat reader. Runs only when a runner has
+	// been attached via AttachLogcatReader. logcatReaderLoop suppresses
+	// non-ctx errors (Pitfall 1) so a logcat EOF cannot cancel video/audio.
+	if s.logcatRunner != nil && s.logcatBuffer != nil {
+		g.Go(func() error { return s.logcatReaderLoop(ctx) })
 	}
 
 	// 4. Control Writer + Device Message Reader (on the same conn).
@@ -445,6 +479,49 @@ func (s *DeviceSession) SetControlWriterForTest(cw *scrcpy.ControlWriter) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.controlWriter = cw
+}
+
+// SetLogcatBufferForTest installs a LogcatBuffer on a test session. Only for
+// use in tests (Plan 03-03 /logcat WS handler tests pre-populate a buffer).
+func (s *DeviceSession) SetLogcatBufferForTest(b *LogcatBuffer) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.logcatBuffer = b
+}
+
+// SetStateForTest sets the session FSM state directly without going through
+// TransitionTo. Only for use in tests that need to drive a session into a
+// non-Active state for handler-side state-check coverage (e.g. Plan 03-03
+// asserts the /logcat handler accepts StateReconnecting).
+func (s *DeviceSession) SetStateForTest(state SessionState) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.state = state
+}
+
+// LogcatBuffer returns the per-device logcat ring buffer, or nil when the
+// session has none attached (e.g. test sessions without a supervisor).
+func (s *DeviceSession) LogcatBuffer() *LogcatBuffer {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.logcatBuffer
+}
+
+// AttachLogcatBuffer installs a LogcatBuffer onto the session. Production
+// callers (the supervisor wiring) call this BEFORE Run so the WS handler
+// always finds a valid buffer for active sessions. Plan 03-03.
+func (s *DeviceSession) AttachLogcatBuffer(b *LogcatBuffer) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.logcatBuffer = b
+}
+
+// LogcatShellRunner is the minimal interface logcatReaderLoop needs. The
+// production implementation is *adb.HostServices; tests inject a fake.
+// Defined here (not in adb) so session does not import the concrete
+// HostServices type.
+type LogcatShellRunner interface {
+	ShellV2Stream(ctx context.Context, serial, cmd string) (stdout, stderr io.ReadCloser, exit <-chan int, err error)
 }
 
 // AttachStallRecovery wires the Plan 03-02 watchdog + recovery pair onto

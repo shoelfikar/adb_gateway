@@ -48,6 +48,33 @@ type ScrcpyConfig struct {
 	AudioSource string `koanf:"audio_source"` // output | mic | playback
 }
 
+// LogcatConfig holds Phase 3 OPS-05 logcat ring buffer tunables.
+type LogcatConfig struct {
+	// RingBufferLines is the per-device retroactive logcat ring size.
+	// Default 10000 (per CONTEXT.md D-02).
+	RingBufferLines int `koanf:"ring_buffer_lines"`
+}
+
+// ScreenshotConfig holds Phase 3 OPS-06 tunables for the screenshot endpoint.
+type ScreenshotConfig struct {
+	// DefaultQuality is the WebP encoder quality used when ?q= is omitted.
+	// Range 1..100. Default 80.
+	DefaultQuality int `koanf:"default_quality"`
+	// RatePerSecPerKey caps screenshots per second per API key (Pitfall 4).
+	// Default 5.0.
+	RatePerSecPerKey float64 `koanf:"rate_per_sec_per_key"`
+}
+
+// FilesConfig holds Phase 3 OPS-08 tunables for file push/pull/delete.
+type FilesConfig struct {
+	// AllowedBasePaths is the allowlist of on-device base directories
+	// (D-11/D-12). Default ["/sdcard/", "/data/local/tmp/"].
+	AllowedBasePaths []string `koanf:"allowed_base_paths"`
+	// MaxUploadBytes caps the request body size for uploads (D-14).
+	// Default 524288000 (500 MiB).
+	MaxUploadBytes int64 `koanf:"max_upload_bytes"`
+}
+
 // Config holds all gateway configuration.
 type Config struct {
 	ListenAddr      string `koanf:"listen_addr"`
@@ -56,10 +83,13 @@ type Config struct {
 	APIKeySecondary string `koanf:"api_key_secondary"`
 	LogLevel        string `koanf:"log_level"`
 	AllowedOrigins  string `koanf:"allowed_origins"`
-	Stream          StreamConfig  `koanf:"stream"`
-	Control         ControlConfig `koanf:"control"`
-	WS              WSConfig      `koanf:"ws"`
-	Scrcpy          ScrcpyConfig  `koanf:"scrcpy"`
+	Stream          StreamConfig     `koanf:"stream"`
+	Control         ControlConfig    `koanf:"control"`
+	WS              WSConfig         `koanf:"ws"`
+	Scrcpy          ScrcpyConfig     `koanf:"scrcpy"`
+	Logcat          LogcatConfig     `koanf:"logcat"`
+	Screenshot      ScreenshotConfig `koanf:"screenshot"`
+	Files           FilesConfig      `koanf:"files"`
 }
 
 // ParseAllowedOrigins splits the comma-separated allowed_origins config value
@@ -107,7 +137,7 @@ func Load() (*Config, error) {
 	// Transform: ADB_GW_LISTEN_ADDR -> listen_addr (lowercase, strip prefix, keep underscores)
 	// For nested Phase 2 keys, the first underscore after a known parent prefix becomes a dot:
 	// ADB_GW_STREAM_VIEWER_BUFFER_FRAMES -> stream.viewer_buffer_frames
-	var nestedPrefixes = []string{"stream_", "control_", "ws_", "scrcpy_"}
+	var nestedPrefixes = []string{"stream_", "control_", "ws_", "scrcpy_", "logcat_", "screenshot_", "files_"}
 	if err := k.Load(env.Provider("ADB_GW_", ".", func(s string) string {
 		key := strings.ToLower(strings.TrimPrefix(s, "ADB_GW_"))
 		for _, p := range nestedPrefixes {
@@ -169,6 +199,23 @@ func Load() (*Config, error) {
 	}
 	if !k.Exists("scrcpy.audio_source") {
 		_ = k.Set("scrcpy.audio_source", "output")
+	}
+
+	// Phase 3 Plan 03-03 defaults.
+	if !k.Exists("logcat.ring_buffer_lines") {
+		_ = k.Set("logcat.ring_buffer_lines", 10000)
+	}
+	if !k.Exists("screenshot.default_quality") {
+		_ = k.Set("screenshot.default_quality", 80)
+	}
+	if !k.Exists("screenshot.rate_per_sec_per_key") {
+		_ = k.Set("screenshot.rate_per_sec_per_key", 5.0)
+	}
+	if !k.Exists("files.allowed_base_paths") {
+		_ = k.Set("files.allowed_base_paths", []string{"/sdcard/", "/data/local/tmp/"})
+	}
+	if !k.Exists("files.max_upload_bytes") {
+		_ = k.Set("files.max_upload_bytes", int64(524288000))
 	}
 
 	var cfg Config
