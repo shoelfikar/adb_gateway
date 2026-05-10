@@ -5,6 +5,7 @@ import (
 	"context"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/pelni/adb-gateway/internal/adb"
@@ -18,8 +19,16 @@ type DeviceEntry struct {
 	State          SessionState
 	Session        *DeviceSession // nil when no active session; defined in supervisor.go
 	LeaseManager   *LeaseManager  // per-device lease manager (plan 02-04, wired in 02-05)
-	AudioAvailable bool            // set by launcher probe (plan 02-05 D-12)
+	AudioAvailable bool           // set by launcher probe (plan 02-05 D-12)
 	mu             sync.Mutex
+
+	// InstallInFlight is the lock-free admission gate for APK install
+	// (Phase 3 Plan 03-04). Concurrent POST /apks on the same device must
+	// see CAS(false,true) fail and return 503 DEVICE_BUSY. The defer that
+	// resets it must use Store(false). Independent of mu (Pitfall 9 — never
+	// hold the device mutex during a long ADB call).
+	InstallInFlight atomic.Bool
+
 }
 
 // Lock acquires the per-device mutex. Used by external packages (e.g., api handlers)

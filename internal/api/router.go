@@ -58,6 +58,9 @@ func NewRouter(cfg *config.Config, registry *session.Registry, adbClient *adb.Cl
 					r.Delete("/", DeleteFile(registry, hostServices, cfg))
 				})
 
+				// Phase 3 Plan 03-04 endpoints.
+				r.Post("/apks", InstallAPK(registry, hostServices, cfg)) // OPS-07
+
 				// Phase 3 Plan 03-02 handoff: manual restart of a sticky-Failed
 				// device. The launcher factory is constructed per call so a
 				// fresh launcher binds to the current adbClient/hostServices.

@@ -202,22 +202,27 @@ func TestAPKInstallCleanupOnPushError(t *testing.T) {
 }
 
 func TestAPKInstallCleanupOnClientDisconnect(t *testing.T) {
+	// D-08 contract: the install runs under context.Background()-derived
+	// timeout ctx, NOT the request ctx. Therefore client disconnect does
+	// NOT abort the install — we only verify cleanup uses a non-cancelled
+	// ctx by cancelling the client and forcing the push to fail. Cleanup
+	// MUST still run with a non-cancelled ctx (Pitfall 5).
 	registry := session.NewRegistry()
 	registry.GetOrCreate("ABC123").SetState(session.StateActive)
 
-	// pushFn blocks until ctx is cancelled (simulating slow upload client cancels).
-	pushBlocked := make(chan struct{})
 	runner := &fakeAPKRunner{
 		pushFn: func(ctx context.Context, dest string, src io.Reader) error {
-			close(pushBlocked)
-			<-ctx.Done()
-			return ctx.Err()
+			io.Copy(io.Discard, src)
+			// Simulate a transport-level error mid-push (independent of
+			// the client ctx — the install ctx is still alive).
+			return errors.New("sync push failed: midstream io error")
 		},
 	}
 	cfg := apkTestConfig()
 	r := setupAPKRouter(t, registry, runner, cfg)
 
 	clientCtx, cancelClient := context.WithCancel(context.Background())
+	cancelClient() // Pre-cancel the client ctx — simulates "client gave up".
 	req := httptest.NewRequest(http.MethodPost, "/devices/ABC123/apks", bytes.NewReader([]byte("APK")))
 	req = req.WithContext(clientCtx)
 	req.Header.Set("X-API-Key", "test-key")
@@ -228,16 +233,13 @@ func TestAPKInstallCleanupOnClientDisconnect(t *testing.T) {
 		r.ServeHTTP(w, req)
 		close(done)
 	}()
-
-	<-pushBlocked
-	cancelClient()
 	select {
 	case <-done:
 	case <-time.After(2 * time.Second):
-		t.Fatal("handler did not return after client cancel")
+		t.Fatal("handler did not return")
 	}
 
-	assert.Equal(t, int32(1), runner.rmCalls.Load(), "cleanup must run even on client disconnect")
+	assert.Equal(t, int32(1), runner.rmCalls.Load(), "cleanup must run even when client ctx is cancelled")
 	assert.True(t, runner.rmCtxBg.Load(), "cleanup must use context.Background — not the cancelled client ctx (Pitfall 5)")
 }
 

@@ -65,6 +65,33 @@ type ScreenshotConfig struct {
 	RatePerSecPerKey float64 `koanf:"rate_per_sec_per_key"`
 }
 
+// APKConfig holds Phase 3 OPS-07 tunables for the APK install endpoint.
+type APKConfig struct {
+	// MaxBytes caps the request body size for APK uploads.
+	// Default 524288000 (500 MiB).
+	MaxBytes int64 `koanf:"max_bytes"`
+	// InstallTimeoutSeconds bounds the entire install operation
+	// (push + pm install). Default 300 (5 min) per CONTEXT.md D-09.
+	InstallTimeoutSeconds int `koanf:"install_timeout_seconds"`
+	// InstallsPerMinutePerKey caps APK installs per minute per API key
+	// (Pitfall 4 + T-03-04-03). Default 5.0.
+	InstallsPerMinutePerKey float64 `koanf:"installs_per_minute_per_key"`
+}
+
+// RecordingConfig holds Phase 3 OPS-09 tunables for screen recording.
+type RecordingConfig struct {
+	// Dir is the on-disk directory under which recordings are written
+	// (one subdirectory per device serial). Default "./recordings".
+	Dir string `koanf:"dir"`
+	// MaxFileBytes triggers rotation to a new file. Default 2147483648
+	// (2 GiB). On rotate, current file is closed cleanly and a new
+	// monotonic-suffix file is opened with re-emitted SPS/PPS.
+	MaxFileBytes int64 `koanf:"max_file_bytes"`
+	// Container selects the on-disk container format. Currently only
+	// "mkv" is implemented (mkvcore + AVC). Default "mkv".
+	Container string `koanf:"container"`
+}
+
 // FilesConfig holds Phase 3 OPS-08 tunables for file push/pull/delete.
 type FilesConfig struct {
 	// AllowedBasePaths is the allowlist of on-device base directories
@@ -90,6 +117,8 @@ type Config struct {
 	Logcat          LogcatConfig     `koanf:"logcat"`
 	Screenshot      ScreenshotConfig `koanf:"screenshot"`
 	Files           FilesConfig      `koanf:"files"`
+	APK             APKConfig        `koanf:"apk"`
+	Recording       RecordingConfig  `koanf:"recording"`
 }
 
 // ParseAllowedOrigins splits the comma-separated allowed_origins config value
@@ -137,7 +166,7 @@ func Load() (*Config, error) {
 	// Transform: ADB_GW_LISTEN_ADDR -> listen_addr (lowercase, strip prefix, keep underscores)
 	// For nested Phase 2 keys, the first underscore after a known parent prefix becomes a dot:
 	// ADB_GW_STREAM_VIEWER_BUFFER_FRAMES -> stream.viewer_buffer_frames
-	var nestedPrefixes = []string{"stream_", "control_", "ws_", "scrcpy_", "logcat_", "screenshot_", "files_"}
+	var nestedPrefixes = []string{"stream_", "control_", "ws_", "scrcpy_", "logcat_", "screenshot_", "files_", "apk_", "recording_"}
 	if err := k.Load(env.Provider("ADB_GW_", ".", func(s string) string {
 		key := strings.ToLower(strings.TrimPrefix(s, "ADB_GW_"))
 		for _, p := range nestedPrefixes {
@@ -216,6 +245,26 @@ func Load() (*Config, error) {
 	}
 	if !k.Exists("files.max_upload_bytes") {
 		_ = k.Set("files.max_upload_bytes", int64(524288000))
+	}
+
+	// Phase 3 Plan 03-04 defaults.
+	if !k.Exists("apk.max_bytes") {
+		_ = k.Set("apk.max_bytes", int64(524288000))
+	}
+	if !k.Exists("apk.install_timeout_seconds") {
+		_ = k.Set("apk.install_timeout_seconds", 300)
+	}
+	if !k.Exists("apk.installs_per_minute_per_key") {
+		_ = k.Set("apk.installs_per_minute_per_key", 5.0)
+	}
+	if !k.Exists("recording.dir") {
+		_ = k.Set("recording.dir", "./recordings")
+	}
+	if !k.Exists("recording.max_file_bytes") {
+		_ = k.Set("recording.max_file_bytes", int64(2147483648))
+	}
+	if !k.Exists("recording.container") {
+		_ = k.Set("recording.container", "mkv")
 	}
 
 	var cfg Config
