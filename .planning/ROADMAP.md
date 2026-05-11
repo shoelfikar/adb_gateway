@@ -71,8 +71,17 @@ Plans:
   4. With audio enabled by default, `/devices/{serial}/audio` streams OPUS frames in parallel with video, preserving the same 12-byte frame-header discipline; clipboard updates and ack DeviceMessages are exposed via the control WS or metrics.
   5. After a 1000-cycle viewer connect/disconnect soak test, `runtime.NumGoroutine()` returns to within ~10 of baseline and FD count stays bounded; `/metrics` exposes device-state, session-state, frames-per-second, drop counters, ADB-call latency, and reverse-tunnel reconcile counters.
 
-**Plans**: TBD
+**Plans**: 8 plans
 
+Plans:
+- [ ] 02-01-PLAN.md -- Config, errors, CORS, baseline metrics
+- [ ] 02-02-PLAN.md -- Hub fan-out with late-joiner cache
+- [ ] 02-03-PLAN.md -- scrcpy control writer marshal table
+- [ ] 02-04-PLAN.md -- Reservation lease state machine
+- [ ] 02-05-PLAN.md -- Audio reader, device message reader, session lifecycle wiring
+- [ ] 02-06-PLAN.md -- API wiring + soak test
+- [ ] 02-07-PLAN.md -- Gap closure: fix WS lifecycle bugs (CloseRead + HTTP timeouts, STR-07/08/09)
+- [ ] 02-08-PLAN.md -- Gap closure: add missing Phase 2 metrics collectors (OBS-01/02)
 **Research flag**: yes -- `/gsd-plan-phase` should run `/gsd-research-phase` to validate late-joiner mechanics against a real WebCodecs decoder, decide the "force keyframe" strategy (no message exists in scrcpy's public protocol -- accept "wait for next natural keyframe" or plan a server.jar tweak), and confirm the actual proxy stack `pelni_server` will use (NGINX/HAProxy/Cloudflare timeouts and Upgrade-header handling).
 
 ### Phase 3: Multi-Device Fleet
@@ -90,8 +99,17 @@ Plans:
   4. After 1000 session create/destroy cycles, no goroutine, FD, or reverse-tunnel mapping leaks (verified by per-session reaper + startup reconciliation); ephemeral reverse-tunnel ports are allocated per session via `net.Listen("127.0.0.1:0")` so simultaneous sessions on different devices never collide; `LimitNOFILE=65536` in the systemd unit is in effect.
   5. Per-device performance metrics (CPU%, memory MB, observed FPS) are sampled at the configured interval (default 5s) and exposed via Prometheus with `device_serial` labels; a udev rules file disabling USB autosuspend for known Android vendor IDs ships with the install, and a documented hub BoM (self-powered, >=2 A/port) is part of the deployment guide.
 
-**Plans**: TBD
+**Plans**: 8 plans
 
+Plans:
+- [ ] 02-01-PLAN.md -- Config, errors, CORS, baseline metrics
+- [ ] 02-02-PLAN.md -- Hub fan-out with late-joiner cache
+- [ ] 02-03-PLAN.md -- scrcpy control writer marshal table
+- [ ] 02-04-PLAN.md -- Reservation lease state machine
+- [ ] 02-05-PLAN.md -- Audio reader, device message reader, session lifecycle wiring
+- [ ] 02-06-PLAN.md -- API wiring + soak test
+- [ ] 02-07-PLAN.md -- Gap closure: fix WS lifecycle bugs (CloseRead + HTTP timeouts, STR-07/08/09)
+- [ ] 02-08-PLAN.md -- Gap closure: add missing Phase 2 metrics collectors (OBS-01/02)
 **Research flag**: no -- PITFALLS.md provides concrete remedies for every Phase 3 failure mode (USB autosuspend, hub BoM, FSM, watchdog, reaper, FD limits). Architecture stays the same as Phase 2; this phase is mostly hardening + ADB-shell feature surface, both well-trodden patterns.
 
 **Progress**:
@@ -100,7 +118,7 @@ Plans:
 | 03-01 foundation-primitives | done (2026-05-09) | ADB streaming helpers, path validator (D-11), 5 Phase 3 sentinels, SCR-07 LaunchOptions, AppProcessPID via pgrep, ScrcpyConfig koanf keys, DEV-06 audit. Requirements shipped: SCR-07, DEV-06. |
 | 03-02 fsm-watchdog-recovery | done (2026-05-09) | StateReconnecting + Hub frame counter, stall watchdog (5s × 5 = 25s), backoff-capped recovery (3 attempts, sticky failed), gateway_session_state gauge, RestartSession handler. Requirements shipped: DEV-05, OPS-02. |
 | 03-03 logcat-screenshot-files | done (2026-05-10) | LogcatBuffer + supervisor wiring, /logcat WS, /screenshot (nativewebp lossless, A3 resolved), /files POST/GET/DELETE with allowlist + 500MB cap, /restart route registration. Requirements shipped: OPS-05, OPS-06, OPS-08. |
-| 03-04 apk-recording | pending | — |
+| 03-04 apk-recording | done (2026-05-10) | APK install (POST /apks) with Pitfall-5 cleanup, per-device atomic.Bool concurrency guard, per-key minute-bucket rate limit; MKV recording subscriber via at-wat/ebml-go (D-18 verified — slow disk evicts recorder, healthy viewers unaffected) + REST handlers (POST/GET/DELETE /recordings). Requirements shipped: OPS-07, OPS-09. |
 
 ### Phase 4: Horizontal Scaling
 
@@ -117,8 +135,17 @@ Plans:
   4. Recordings respect a configurable retention policy (max age + max disk); a janitor goroutine cleans up expired recordings on a configurable interval, and disk usage stays bounded under continuous recording load.
   5. After a multi-instance soak test (24h, mixed device churn, 2x rolling restart), no Redis claims older than 2x heartbeat interval persist, no duplicate `app_process` instances run on any device, and the API key surface remains constant-time-compared with two-key rotation surviving the rolling restart without dropping in-flight sessions on the surviving primary.
 
-**Plans**: TBD
+**Plans**: 8 plans
 
+Plans:
+- [ ] 02-01-PLAN.md -- Config, errors, CORS, baseline metrics
+- [ ] 02-02-PLAN.md -- Hub fan-out with late-joiner cache
+- [ ] 02-03-PLAN.md -- scrcpy control writer marshal table
+- [ ] 02-04-PLAN.md -- Reservation lease state machine
+- [ ] 02-05-PLAN.md -- Audio reader, device message reader, session lifecycle wiring
+- [ ] 02-06-PLAN.md -- API wiring + soak test
+- [ ] 02-07-PLAN.md -- Gap closure: fix WS lifecycle bugs (CloseRead + HTTP timeouts, STR-07/08/09)
+- [ ] 02-08-PLAN.md -- Gap closure: add missing Phase 2 metrics collectors (OBS-01/02)
 **Research flag**: yes -- `/gsd-plan-phase` should run `/gsd-research-phase` to verify the actual LB `pelni_server` will deploy supports URL-path/query-param hashing (HAProxy `balance hdr`/`url_param`, NGINX `hash`); if it only supports cookie stickiness, fall back to the in-process WS proxy variant and accept the bandwidth cost. Verify Redis topology (single node vs Sentinel vs Cluster) before designing key schemas.
 
 ## Cross-Phase Dependencies
@@ -152,8 +179,8 @@ Plans:
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Single-Device Streaming Foundation | 8 | complete | 01-01, 01-02, 01-03, 01-04, 01-05, 01-06, 01-07, 01-08 |
-| 2. Multi-Client + Control | 6 | complete | 02-01, 02-02, 02-03, 02-04, 02-05, 02-06 |
-| 3. Multi-Device Fleet | 0/0 | not started | -- |
+| 2. Multi-Client + Control | 8 | gap closure | 02-01, 02-02, 02-03, 02-04, 02-05, 02-06, 02-07, 02-08 |
+| 3. Multi-Device Fleet | 4 | complete | 03-01, 03-02, 03-03, 03-04 |
 | 4. Horizontal Scaling | 0/0 | not started | -- |
 
 ## Coverage Summary
