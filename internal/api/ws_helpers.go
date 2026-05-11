@@ -71,6 +71,11 @@ func subscribeAndRelay(ctx context.Context, ws *websocket.Conn, hub *session.Hub
 	}
 	defer unsub()
 
+	// Read-side goroutine: processes ping/pong and close frames.
+	// Required by coder/websocket — without this, pongs are never dispatched
+	// and Ping() blocks forever, causing idle-timeout disconnections (code 1006).
+	ws.CloseRead(ctx)
+
 	// Run ping loop in parallel; cancel parent ctx if it returns an idle error.
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()

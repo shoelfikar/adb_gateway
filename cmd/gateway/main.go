@@ -133,13 +133,16 @@ func main() {
 	router := api.NewRouter(cfg, registry, adbClient, hostServices)
 
 	srv := &http.Server{
-		Addr:         cfg.ListenAddr,
-		Handler:      router,
-		ReadTimeout:  15 * time.Second,
-		// WriteTimeout must accommodate session creation, which involves
-		// push (30s), reverse tunnel (10s), accept (10s), and metadata
-		// reads (10s). Total can legitimately reach 60s.
-		WriteTimeout: 65 * time.Second,
+		Addr:               cfg.ListenAddr,
+		Handler:            router,
+		ReadHeaderTimeout: 15 * time.Second,
+		// WriteTimeout is intentionally 0 (no deadline). After WebSocket Hijack(),
+		// the net.Conn retains any WriteTimeout deadline set by http.Server,
+		// causing WS writes to fail after 65s. Setting WriteTimeout: 0 prevents
+		// this. WS idle/ping timeouts are handled by our own pingLoop, not HTTP
+		// timeouts. ReadHeaderTimeout is safe because it only covers reading
+		// request headers, not the body (which for WS is the upgraded connection).
+		WriteTimeout: 0,
 		IdleTimeout:  60 * time.Second,
 	}
 

@@ -83,6 +83,10 @@ func StreamLogcat(registry *session.Registry, allowedOrigins []string, cfg *conf
 		snapshot, ch, unsub := buf.Subscribe(viewerID)
 		defer unsub()
 
+		// Read-side goroutine: processes ping/pong and close frames.
+		// Required because StreamLogcat's main loop writes but never reads.
+		ws.CloseRead(ctx)
+
 		// 1. Replay snapshot, one text frame per line.
 		for _, line := range snapshot {
 			if err := ws.Write(ctx, websocket.MessageText, []byte(line)); err != nil {
