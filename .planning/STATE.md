@@ -3,40 +3,40 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-last_updated: "2026-05-11T03:40:38.000Z"
+last_updated: "2026-05-11T04:00:00.000Z"
 progress:
   total_phases: 4
   completed_phases: 3
   total_plans: 20
-  completed_plans: 19
-  percent: 75
+  completed_plans: 20
+  percent: 100
 ---
 
 # Project State: ADB Gateway
 
 **Initialized:** 2026-05-06
 **Mode:** YOLO, sequential, standard granularity
-**Last updated:** 2026-05-11 (Phase 2 gap closure — 02-07 WS lifecycle fix complete)
+**Last updated:** 2026-05-11 (Phase 2 gap closure complete — all UAT gaps closed)
 
 ## Project Reference
 
 **Core value:** Reliable, low-latency streaming and control of many physical Android devices, exposed as a clean API that `pelni_server` can embed without needing to understand ADB or scrcpy internals.
 
-**Current focus:** Phase 3 — Multi-Device Fleet — COMPLETE. All four plans done. 03-04 shipped APK install (POST /apks with Pitfall-5 cleanup discipline, per-device atomic.Bool concurrency guard, per-key minute-bucket rate limit), screen recording (POST/GET/DELETE /recordings) backed by `at-wat/ebml-go/mkvcore` (MKV chosen over MP4 for crash tolerance per CONTEXT.md), with the D-18 architectural insurance verified by `TestRecordingSlowConsumer` (a slow disk evicts the recorder via Hub's drop-on-slow policy without affecting live viewers). Requirements shipped this plan: OPS-07, OPS-09.
+**Current focus:** Phase 2 gap closure COMPLETE. 02-07 fixed WS lifecycle bugs (ws.CloseRead on /video, /audio, /logcat; WriteTimeout:0 on http.Server; corrected ping/pong and ReadLimit tests). 02-08 added 4 missing Phase 2 Prometheus collectors (LeaseAcquiredTotal, LeaseReleasedTotal, WSFramesSentTotal, HubViewersActive) with D-18 label constraints. All UAT gaps closed.
 
 ## Current Position
 
 | Field | Value |
 |-------|-------|
-| Phase | 2 — Multi-Client Control (gap closure: 02-07 done, 02-08 pending); 3 — Multi-Device Fleet (complete); 4 — Horizontal Scaling (not started) |
-| Plan | 02-07 complete (WS lifecycle fix); 02-08 next (metrics) |
+| Phase | 2 — Multi-Client Control (complete); 3 — Multi-Device Fleet (complete); 4 — Horizontal Scaling (not started) |
+| Plan | 02-07, 02-08 complete (gap closure) |
 | Status | executing |
-| Phase progress | 7/8 plans complete (Phase 2 gap closure: 02-07 done) |
+| Phase progress | 8/8 plans complete (Phase 2 fully done) |
 | Overall progress | 3/4 phases complete |
 
 ```
 [██████████] 100%  Phase 1 (8/8 plans complete)
-[█████████░] 88%   Phase 2 (7/8 plans complete — 02-07 done)
+[██████████] 100%  Phase 2 (8/8 plans complete)
 [██████████] 100%  Phase 3 (4/4 plans complete)
 [░░░░░░░░░░] 0%    Phase 4
 ```
@@ -46,8 +46,8 @@ progress:
 | Metric | Value |
 |--------|-------|
 | Phases completed | 3 |
-| Plans completed | 19 (01-01..01-08, 02-01..02-07, 03-01..03-04) |
-| Requirements shipped | 12 / 68 (SCR-07, DEV-06, DEV-05, OPS-02, OPS-05, OPS-06, OPS-07, OPS-08, OPS-09, STR-07, STR-08, STR-09) |
+| Plans completed | 20 (01-01..01-08, 02-01..02-08, 03-01..03-04) |
+| Requirements shipped | 14 / 68 (SCR-07, DEV-06, DEV-05, OPS-02, OPS-05, OPS-06, OPS-07, OPS-08, OPS-09, STR-07, STR-08, STR-09, OBS-01, OBS-02) |
 | Validated requirements | 0 |
 | Decisions logged | 8 (in PROJECT.md Key Decisions, all `— Pending`) |
 
@@ -116,6 +116,10 @@ progress:
 59. **Recording muxer = at-wat/ebml-go/mkvcore (MKV)** — chosen over Eyevinn/mp4ff because CONTEXT.md recommends MKV for crash tolerance; mp4ff requires clean Close to finalize moov atom while MKV cluster boundaries leave a playable file on abrupt termination.
 60. **Recording.Run reads single-frame at a time from r.sub** — D-18 architectural insurance: pre-buffering frames into a local queue would mask backpressure and prevent Hub eviction; the recorder MUST be observably slow when the disk is slow, so Hub's drop-on-slow policy can evict it without back-pressuring live viewers.
 61. **Recording requires StateActive (Reconnecting rejected)** — recording subscribed during recovery would observe stream gap; in-flight recordings stop cleanly when watchdog fires; caller restarts manually after recovery.
+62. **ws.CloseRead(ctx) required on all write-only WS handlers** — coder/websocket requires concurrent Read() calls; without CloseRead, pongs are never dispatched and Ping() blocks forever, causing code 1006 disconnections after ~75-90s. Applies to /video, /audio, /logcat (NOT /control which already reads).
+63. **http.Server WriteTimeout must be 0 for WS endpoints** — WriteTimeout persists on the hijacked net.Conn after WebSocket upgrade, causing WS writes to fail after 65s. Use ReadHeaderTimeout instead of ReadTimeout; WS idle/ping timeouts are handled by pingLoop, not HTTP timeouts.
+64. **Phase 2 metrics collectors use no device_serial labels (D-18)** — LeaseAcquiredTotal (plain counter), LeaseReleasedTotal (counter+reason), WSFramesSentTotal (counter+stream), HubViewersActive (gauge+stream). Per-device labels deferred to Phase 3.
+65. **WSFramesSentTotal distinct from FramesEmittedTotal** — FramesEmittedTotal counts Hub fan-out sends (buffered/dropped); WSFramesSentTotal counts actual WS write calls. They converge normally but diverge when slow consumers are evicted.
 62. **Write-only WS handlers must call ws.CloseRead(ctx)** — coder/websocket requires concurrent Read() calls to process pong and close frames; without CloseRead, pings block forever and connections drop with code 1006. Applies to /video, /audio, /logcat (write-only handlers that never call ws.Read).
 63. **HTTP servers that upgrade to WebSocket must use ReadHeaderTimeout + WriteTimeout:0** — ReadTimeout persists on the hijacked net.Conn after upgrade, and WriteTimeout causes writes to fail after the deadline. ReadHeaderTimeout only covers headers; WriteTimeout:0 prevents the 65s write deadline from leaking onto WS connections.
 64. **CloseRead and pingLoop serve different purposes** — CloseRead processes inbound control frames (pong responses, close frames, ReadLimit enforcement); pingLoop sends outbound pings and detects idle timeouts. Both must run concurrently.
@@ -144,7 +148,7 @@ progress:
 
 ## Session Continuity
 
-**Last action:** Plan 02-07 executed (Phase 2 gap closure) — Fixed two compounding bugs causing WebSocket code 1006 on /video, /audio, /logcat: (1) `ws.CloseRead(ctx)` added to `subscribeAndRelay()` and `StreamLogcat()` — write-only WS handlers never processed inbound control frames, causing ping/pong to block forever and idle timeouts to fire as code 1006; (2) `http.Server` changed from `ReadTimeout: 15s, WriteTimeout: 65s` to `ReadHeaderTimeout: 15s, WriteTimeout: 0` — the 65s WriteTimeout persisted on hijacked net.Conn causing writes to fail after 65s. Tests updated: `TestStreamVideoPingPongCycle` validates actual ping/pong processing, `TestStreamVideoReadLimitApplied` validates server-side ReadLimit enforcement with StatusMessageTooBig, `TestStreamVideoCloseFrameProcessed` validates clean close frame handling. Requirements shipped: STR-07, STR-08, STR-09.
+**Last action:** Plan 02-08 executed (Phase 2 gap closure) — Added four missing Phase 2 Prometheus collectors: LeaseAcquiredTotal (plain counter), LeaseReleasedTotal (counter with reason label), WSFramesSentTotal (counter with stream label), HubViewersActive (gauge with stream label). All with D-18 cardinality compliance (no device_serial labels). Instrumented LeaseManager.Acquire and reapLockedLocked, Hub.Subscribe/Unsubscribe/evict fan-out loop. TestPhase2MetricNames discovers all 11 metric families. Requirements shipped: OBS-01, OBS-02.
 
 **Previous action:** Plan 03-03 executed — `LogcatBuffer` 10000-line ring with atomic Subscribe-with-snapshot and drop-on-slow eviction; `logcatReaderLoop` runs `logcat -v threadtime` under per-device errgroup with cenkalti/backoff (1s..30s) and Pitfall 1 mitigation (suppresses non-ctx errors so logcat EOF cannot kill video/audio siblings); `StreamLogcat` WS handler accepts StateActive AND StateReconnecting (Pitfall 1 — buffer survives recovery); `CaptureScreenshot` POST endpoint with `screencap -p` -> `png.Decode` -> `nativewebp.Encode` (A3 RESOLVED — v1.2.1 ships only lossless `Encode`; we set `X-WebP-Mode: lossless-fallback` per the D-07 fallback contract); per-API-key token-bucket rate limit via `golang.org/x/time/rate` (Pitfall 4); `UploadFile`/`DownloadFile`/`DeleteFile` POST/GET/DELETE with `ValidateDevicePath` BEFORE every ADB call (security invariant TestFilesPathTraversal asserts zero ADB calls for traversal inputs), `http.MaxBytesReader`-capped uploads (500 MiB default), `shellQuote` defence-in-depth on DELETE; router wires `/logcat`, `/screenshot`, `/files {POST,GET,DELETE}`, and the 03-02 handoff `/restart` route. THIRD_PARTY_NOTICES updated with `HugoSmits86/nativewebp` (MIT) and `golang.org/x/time` (BSD-3). All `go test -race` packages green; OPS-05 + OPS-06 + OPS-08 satisfied.
 
@@ -165,6 +169,7 @@ progress:
 - `.planning/phases/02-multi-client-control/02-05-SUMMARY.md` — audio reader, device message reader, session lifecycle wiring
 - `.planning/phases/02-multi-client-control/02-06-SUMMARY.md` — API wiring + soak test
 - `.planning/phases/02-multi-client-control/02-07-SUMMARY.md` — WS code 1006 fix (CloseRead + HTTP timeouts)
+- `.planning/phases/02-multi-client-control/02-08-SUMMARY.md` — Phase 2 metrics gap closure (lease, hub, ws-frames collectors)
 - `.planning/phases/03-multi-device-fleet/03-CONTEXT.md` — Phase 3 implementation decisions
 - `.planning/phases/03-multi-device-fleet/03-RESEARCH.md` — Phase 3 technical research
 - `.planning/phases/03-multi-device-fleet/03-PATTERNS.md` — Phase 3 pattern mapping
@@ -175,4 +180,4 @@ progress:
 - `.planning/phases/03-multi-device-fleet/03-04-SUMMARY.md` — APK install + screen recording (Pitfall-5 cleanup discipline, per-device atomic.Bool concurrency guard, per-key minute-bucket rate limit; MKV recording via at-wat/ebml-go/mkvcore with D-18 verified)
 
 ---
-*State updated: 2026-05-11 by plan 02-07 execution (Phase 2 gap closure)*
+*State updated: 2026-05-11 by plan 02-08 execution (Phase 2 gap closure — metrics collectors)*
