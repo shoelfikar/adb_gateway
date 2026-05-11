@@ -4,6 +4,8 @@ import (
 	"testing"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/testutil"
+	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -87,17 +89,27 @@ func TestPhase2MetricNames(t *testing.T) {
 	FramesDroppedTotal.WithLabelValues("video").Add(0)
 	ReverseTunnelReconcileTotal.WithLabelValues("success").Add(0)
 	ADBCallSeconds.Observe(0.001)
+	SessionState.WithLabelValues("test-device", "idle").Set(0)
+	LeaseAcquiredTotal.Inc()
+	LeaseReleasedTotal.WithLabelValues("client_released").Inc()
+	WSFramesSentTotal.WithLabelValues("video").Inc()
+	HubViewersActive.WithLabelValues("video").Set(1)
 
 	fams, err := reg.Gather()
 	require.NoError(t, err)
 
 	wantNames := map[string]bool{
-		"gateway_devices_total":                 false,
-		"gateway_sessions_total":                false,
-		"gateway_frames_emitted_total":          false,
-		"gateway_frames_dropped_total":          false,
-		"gateway_adb_call_seconds":              false,
-		"gateway_reverse_tunnel_reconcile_total": false,
+		"gateway_devices_total":                     false,
+		"gateway_sessions_total":                    false,
+		"gateway_frames_emitted_total":              false,
+		"gateway_frames_dropped_total":              false,
+		"gateway_adb_call_seconds":                   false,
+		"gateway_reverse_tunnel_reconcile_total":    false,
+		"gateway_session_state":                     false, // Phase 3 per-device
+		"gateway_lease_acquired_total":               false, // Phase 2 gap closure
+		"gateway_lease_released_total":               false, // Phase 2 gap closure
+		"gateway_ws_frames_sent_total":               false, // Phase 2 gap closure
+		"gateway_hub_viewers_active":                 false, // Phase 2 gap closure
 	}
 
 	for _, fam := range fams {
@@ -163,6 +175,126 @@ func TestPhase2DevicesTotalGauge(t *testing.T) {
 	}
 }
 
+// TestLeaseMetrics verifies that the lease acquire and release counters
+// increment correctly with no device_serial label (D-18).
+func TestLeaseMetrics(t *testing.T) {
+	reg := prometheus.NewRegistry()
+	MustRegister(reg)
+
+	// Use delta-based assertions since package-level counters accumulate.
+	beforeAcquire := testutil.ToFloat64(LeaseAcquiredTotal)
+	beforeReleaseClient := testutil.ToFloat64(LeaseReleasedTotal.WithLabelValues("client_released"))
+	beforeReleaseExpired := testutil.ToFloat64(LeaseReleasedTotal.WithLabelValues("expired"))
+	beforeReleaseAdmin := testutil.ToFloat64(LeaseReleasedTotal.WithLabelValues("admin_revoked"))
+
+	// LeaseAcquiredTotal is a plain counter (no labels).
+	LeaseAcquiredTotal.Inc()
+	LeaseAcquiredTotal.Inc()
+
+	// LeaseReleasedTotal carries a "reason" label.
+	LeaseReleasedTotal.WithLabelValues("client_released").Inc()
+	LeaseReleasedTotal.WithLabelValues("expired").Inc()
+	LeaseReleasedTotal.WithLabelValues("admin_revoked").Inc()
+
+	// Verify delta-based counter increments.
+	assert.Equal(t, float64(2), testutil.ToFloat64(LeaseAcquiredTotal)-beforeAcquire,
+		"LeaseAcquiredTotal should increment by 2")
+	assert.Equal(t, float64(1), testutil.ToFloat64(LeaseReleasedTotal.WithLabelValues("client_released"))-beforeReleaseClient,
+		"LeaseReleasedTotal{client_released} should increment by 1")
+	assert.Equal(t, float64(1), testutil.ToFloat64(LeaseReleasedTotal.WithLabelValues("expired"))-beforeReleaseExpired,
+		"LeaseReleasedTotal{expired} should increment by 1")
+	assert.Equal(t, float64(1), testutil.ToFloat64(LeaseReleasedTotal.WithLabelValues("admin_revoked"))-beforeReleaseAdmin,
+		"LeaseReleasedTotal{admin_revoked} should increment by 1")
+
+	// Verify metric families are registered and discoverable via Gather.
+	fams, err := reg.Gather()
+	require.NoError(t, err)
+
+	famMap := map[string]*dto.MetricFamily{}
+	for _, fam := range fams {
+		famMap[fam.GetName()] = fam
+	}
+
+	// Verify families exist.
+	_, ok := famMap["gateway_lease_acquired_total"]
+	require.True(t, ok, "gateway_lease_acquired_total family must exist")
+	relFam, ok := famMap["gateway_lease_released_total"]
+	require.True(t, ok, "gateway_lease_released_total family must exist")
+
+	// Verify LeaseReleasedTotal has 3 reason label values (at minimum the ones we exercised).
+	assert.GreaterOrEqual(t, len(relFam.Metric), 3, "LeaseReleasedTotal should have at least 3 label combinations")
+
+	// Verify no device_serial labels on either lease metric.
+	forbiddenLabels := map[string]bool{
+		"device_serial": true,
+		"device":        true,
+		"serial":        true,
+	}
+	for _, m := range famMap["gateway_lease_acquired_total"].Metric {
+		for _, lp := range m.Label {
+			require.False(t, forbiddenLabels[lp.GetName()],
+				"forbidden label %q on lease_acquired_total", lp.GetName())
+		}
+	}
+	for _, m := range relFam.Metric {
+		for _, lp := range m.Label {
+			require.False(t, forbiddenLabels[lp.GetName()],
+				"forbidden label %q on lease_released_total", lp.GetName())
+		}
+	}
+}
+
+// TestHubViewersActiveGauge verifies that HubViewersActive gauge increments
+// and decrements with the "stream" label (no device_serial per D-18).
+func TestHubViewersActiveGauge(t *testing.T) {
+	reg := prometheus.NewRegistry()
+	MustRegister(reg)
+
+	// Use delta-based assertions since package-level gauges accumulate across tests.
+	// Use a unique stream label to avoid cross-test interference.
+	const streamVideo = "video_test_hub_gauge"
+	const streamAudio = "audio_test_hub_gauge"
+
+	// Simulate 2 video viewers, 1 audio viewer.
+	HubViewersActive.WithLabelValues(streamVideo).Inc()
+	HubViewersActive.WithLabelValues(streamVideo).Inc()
+	HubViewersActive.WithLabelValues(streamAudio).Inc()
+
+	// One video viewer disconnects.
+	HubViewersActive.WithLabelValues(streamVideo).Dec()
+
+	// Verify gauge values using testutil.
+	assert.Equal(t, 1.0, testutil.ToFloat64(HubViewersActive.WithLabelValues(streamVideo)),
+		"video viewers should be 1 after Inc/Inc/Dec")
+	assert.Equal(t, 1.0, testutil.ToFloat64(HubViewersActive.WithLabelValues(streamAudio)),
+		"audio viewers should be 1 after Inc")
+
+	// Verify metric family is registered and discoverable via Gather.
+	fams, err := reg.Gather()
+	require.NoError(t, err)
+
+	famMap := map[string]*dto.MetricFamily{}
+	for _, fam := range fams {
+		famMap[fam.GetName()] = fam
+	}
+
+	gaugeFam, ok := famMap["gateway_hub_viewers_active"]
+	require.True(t, ok, "gateway_hub_viewers_active family must exist")
+
+	// Verify no device_serial label.
+	forbiddenLabels := map[string]bool{
+		"device_serial": true,
+		"device":        true,
+		"serial":        true,
+	}
+	for _, m := range gaugeFam.Metric {
+		for _, lp := range m.Label {
+			require.False(t, forbiddenLabels[lp.GetName()],
+				"forbidden label %q on hub_viewers_active", lp.GetName())
+		}
+	}
+}
+
 func TestPhase2ADBCallSecondsHistogram(t *testing.T) {
 	reg := prometheus.NewRegistry()
 	MustRegister(reg)
@@ -192,6 +324,10 @@ func TestPhase2NoDeviceSerialLabel(t *testing.T) {
 	FramesDroppedTotal.WithLabelValues("video").Inc()
 	ReverseTunnelReconcileTotal.WithLabelValues("success").Inc()
 	ADBCallSeconds.Observe(0.001)
+	LeaseAcquiredTotal.Inc()
+	LeaseReleasedTotal.WithLabelValues("client_released").Inc()
+	WSFramesSentTotal.WithLabelValues("video").Inc()
+	HubViewersActive.WithLabelValues("video").Set(1)
 
 	fams, err := reg.Gather()
 	require.NoError(t, err)

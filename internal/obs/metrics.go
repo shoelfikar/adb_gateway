@@ -53,6 +53,36 @@ var (
 		Name: "gateway_session_state",
 		Help: "Current session state, one-hot encoded by device_serial and state name.",
 	}, []string{"device_serial", "state"})
+
+	// LeaseAcquiredTotal counts lease acquisition events (CTL-02).
+	// No device_serial label per D-18 (per-device labels deferred to Phase 3).
+	LeaseAcquiredTotal = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "gateway_lease_acquired_total",
+		Help: "Total lease acquisition events.",
+	})
+
+	// LeaseReleasedTotal counts lease release events by reason (CTL-02).
+	// No device_serial label per D-18.
+	LeaseReleasedTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "gateway_lease_released_total",
+		Help: "Total lease release events by reason (expired, client_released, admin_revoked, device_gone).",
+	}, []string{"reason"})
+
+	// WSFramesSentTotal counts WebSocket frames written to clients (OBS-01).
+	// Differs from FramesEmittedTotal: that counts Hub fan-out sends (which may
+	// be buffered or dropped), this counts actual WS write calls. The two should
+	// converge under normal operation but diverge when slow consumers are evicted.
+	WSFramesSentTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "gateway_ws_frames_sent_total",
+		Help: "Total WebSocket frames successfully written to clients, by stream type.",
+	}, []string{"stream"})
+
+	// HubViewersActive tracks active viewers per stream type (OBS-01).
+	// No device_serial label per D-18 (per-device labels deferred to Phase 3).
+	HubViewersActive = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "gateway_hub_viewers_active",
+		Help: "Number of active viewers currently subscribed to a stream, by stream type.",
+	}, []string{"stream"})
 )
 
 // allSessionStateNames lists every defined session-state string. SetSessionState
@@ -99,5 +129,9 @@ func MustRegister(r prometheus.Registerer) {
 		ADBCallSeconds,
 		ReverseTunnelReconcileTotal,
 		SessionState,
+		LeaseAcquiredTotal,  // Phase 2 gap closure
+		LeaseReleasedTotal,  // Phase 2 gap closure
+		WSFramesSentTotal,   // Phase 2 gap closure
+		HubViewersActive,    // Phase 2 gap closure
 	)
 }
