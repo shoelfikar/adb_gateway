@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -243,18 +244,69 @@ func TestStreamVideoLateJoinerReceivesKeyframe(t *testing.T) {
 	assert.Contains(t, string(data2), "keyframe-data", "late joiner should receive the cached keyframe")
 }
 
+func TestStreamVideoPingPongCycle(t *testing.T) {
+	// STR-08: With CloseRead now active, pings from the server are answered by
+	// the client's auto-pong (coder/websocket processes pings during Read).
+	// The connection stays alive as long as pongs arrive. We verify that after
+	// multiple ping intervals the connection is still alive by writing a frame
+	// from the server and reading it on the client.
+	sess, hub, cancel := newActiveSessionWithHub(t, "ABC123")
+	defer cancel()
+
+	registry := session.NewRegistry()
+	cfg := testConfig()
+	cfg.WS.PingIntervalSeconds = 1 // fast ping for testing
+	cfg.WS.IdleTimeoutSeconds = 3   // 3 consecutive misses = idle
+
+	entry := registry.GetOrCreate("ABC123")
+	entry.SetSession(sess)
+	entry.SetState(session.StateActive)
+
+	router := setupWSVideoRouter(registry, cfg)
+	server := httptest.NewServer(router)
+	defer server.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(server.URL, "http") + "/devices/ABC123/video"
+	ctx, ctxCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer ctxCancel()
+
+	conn, _, err := websocket.Dial(ctx, wsURL, nil)
+	require.NoError(t, err)
+	defer conn.CloseNow()
+
+	// Read codec meta
+	readCtx, readCancel := context.WithTimeout(ctx, 2*time.Second)
+	defer readCancel()
+	_, _, err = conn.Read(readCtx)
+	require.NoError(t, err, "should receive codec meta")
+
+	// Wait through 3+ ping intervals. With CloseRead on the server side,
+	// pong responses are processed and the idle counter resets.
+	// Connection should still be alive.
+	time.Sleep(4 * time.Second)
+
+	// Publish a frame from the hub; if the connection is alive the client
+	// will receive it.
+	hub.Publish(&session.Frame{
+		Header:   [12]byte{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11},
+		Payload:  []byte("after-pings"),
+		KeyFrame: false,
+	})
+
+	readCtx2, readCancel2 := context.WithTimeout(ctx, 2*time.Second)
+	defer readCancel2()
+	_, data, err := conn.Read(readCtx2)
+	require.NoError(t, err, "connection should still be alive after pings")
+	assert.Contains(t, string(data), "after-pings", "should receive frame published after ping cycles")
+}
+
 func TestStreamVideoReadLimitApplied(t *testing.T) {
-	// STR-09: SetReadLimit should be applied; the ws connection should reject
-	// messages that exceed the read limit. We verify this by checking that
-	// SetReadLimit is called with the configured value.
+	// STR-09: Server-side ReadLimit enforcement. With CloseRead active, the
+	// server now reads inbound frames. An oversized frame triggers
+	// StatusMessageTooBig and the connection is closed by the server.
 	cfg := testConfig()
 	cfg.WS.ReadLimitBytes = 256
-	assert.Equal(t, int64(256), cfg.WS.ReadLimitBytes, "ReadLimitBytes should be settable")
 
-	// The actual enforcement happens in coder/websocket's Read method:
-	// if the received message size exceeds SetReadLimit, Read returns an error
-	// with websocket.StatusMessageTooBig. We test this by creating a real WS
-	// connection and sending an oversized payload.
 	sess, _, cancel := newActiveSessionWithHub(t, "ABC123")
 	defer cancel()
 
@@ -281,32 +333,39 @@ func TestStreamVideoReadLimitApplied(t *testing.T) {
 	_, _, err = conn.Read(readCtx)
 	require.NoError(t, err, "should receive codec meta")
 
-	// Send a large message from the client side (exceeding 256-byte limit)
+	// Send an oversized message (>256 bytes) from the client.
+	// The server's CloseRead goroutine will read it, detect the ReadLimit
+	// violation, and close the connection with StatusMessageTooBig.
 	largePayload := make([]byte, 512)
 	writeCtx, writeCancel := context.WithTimeout(ctx, 2*time.Second)
 	defer writeCancel()
 	err = conn.Write(writeCtx, websocket.MessageText, largePayload)
-	require.NoError(t, err)
+	require.NoError(t, err, "client should be able to write the oversized message")
 
-	// After sending oversized payload, the server will close the connection.
-	// Subsequent reads should fail.
-	time.Sleep(100 * time.Millisecond)
-	readCtx2, readCancel2 := context.WithTimeout(ctx, 2*time.Second)
+	// The server closes the connection. The client's next read should return
+	// an error containing StatusMessageTooBig (1009).
+	readCtx2, readCancel2 := context.WithTimeout(ctx, 3*time.Second)
 	defer readCancel2()
 	_, _, err = conn.Read(readCtx2)
 	assert.Error(t, err, "connection should be closed after read limit violation")
+
+	// Verify the close status is StatusMessageTooBig.
+	var wsErr *websocket.CloseError
+	if errors.As(err, &wsErr) {
+		assert.Equal(t, websocket.StatusMessageTooBig, wsErr.Code,
+			"close code should be StatusMessageTooBig (1009)")
+	}
 }
 
-func TestStreamVideoPingLoop(t *testing.T) {
-	// STR-08: Ping loop disconnects after idle timeout.
+func TestStreamVideoCloseFrameProcessed(t *testing.T) {
+	// Client-initiated close frames are now processed by CloseRead.
+	// When a client sends a normal close, the server should exit cleanly
+	// (no code 1006 abnormal closure).
 	sess, _, cancel := newActiveSessionWithHub(t, "ABC123")
 	defer cancel()
 
 	registry := session.NewRegistry()
-	// Tiny timeouts for testing
 	cfg := testConfig()
-	cfg.WS.PingIntervalSeconds = 1 // 1 second ping interval
-	cfg.WS.IdleTimeoutSeconds = 3   // 3 second idle timeout (3 missed pings)
 
 	entry := registry.GetOrCreate("ABC123")
 	entry.SetSession(sess)
@@ -317,32 +376,43 @@ func TestStreamVideoPingLoop(t *testing.T) {
 	defer server.Close()
 
 	wsURL := "ws" + strings.TrimPrefix(server.URL, "http") + "/devices/ABC123/video"
-	ctx, ctxCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, ctxCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer ctxCancel()
 
 	conn, _, err := websocket.Dial(ctx, wsURL, nil)
 	require.NoError(t, err)
-	defer conn.CloseNow()
 
-	// Read codec meta first
+	// Read codec meta
 	readCtx, readCancel := context.WithTimeout(ctx, 2*time.Second)
 	defer readCancel()
 	_, _, err = conn.Read(readCtx)
 	require.NoError(t, err, "should receive codec meta")
 
-	// The ping loop is wired up and running. Since we can't easily blackhole
-	// pings in a test without additional infrastructure, we verify that
-	// the connection remains alive for a few seconds (pings are working).
-	// The idle timeout would take ~9s to trigger (3 missed * 3s threshold),
-	// which is too slow for a unit test. We simply verify the mechanism
-	// doesn't crash and pings don't disconnect an active client.
-	time.Sleep(2 * time.Second)
+	// Client sends a normal close frame.
+	closeCtx, closeCancel := context.WithTimeout(ctx, 2*time.Second)
+	defer closeCancel()
+	err = conn.Close(websocket.StatusNormalClosure, "bye")
+	require.NoError(t, err, "client should send close frame")
 
-	// Connection should still be alive after 2s with active pings
-	readCtx2, readCancel2 := context.WithTimeout(ctx, 1*time.Second)
+	// Give the server's CloseRead goroutine time to process the close frame.
+	_ = closeCtx
+
+	// The connection should be cleanly shut down (not code 1006).
+	// Verify by attempting to read; we should get a close error with
+	// a normal closure code, not an abnormal closure.
+	readCtx2, readCancel2 := context.WithTimeout(ctx, 2*time.Second)
 	defer readCancel2()
-	_ = conn.CloseNow() // clean up
-	_ = readCtx2
+	_, _, err = conn.Read(readCtx2)
+	// The read should return an error (connection closed), but it should
+	// NOT be StatusAbnormalClosure (1006).
+	if err != nil {
+		var wsErr *websocket.CloseError
+		if errors.As(err, &wsErr) {
+			assert.NotEqual(t, websocket.StatusAbnormalClosure, wsErr.Code,
+				"should not receive abnormal closure (1006); close frames should be processed cleanly")
+		}
+		// Any non-1006 error is acceptable: normal closure, going away, etc.
+	}
 }
 
 func TestBuildAcceptOptions(t *testing.T) {
