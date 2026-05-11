@@ -80,7 +80,7 @@ Plans:
 - [ ] 02-04-PLAN.md -- Reservation lease state machine
 - [ ] 02-05-PLAN.md -- Audio reader, device message reader, session lifecycle wiring
 - [ ] 02-06-PLAN.md -- API wiring + soak test
-- [ ] 02-07-PLAN.md -- Gap closure: fix WS lifecycle bugs (CloseRead + HTTP timeouts, STR-07/08/09)
+- [x] 02-07-PLAN.md -- Gap closure: fix WS lifecycle bugs (CloseRead + HTTP timeouts, STR-07/08/09)
 - [ ] 02-08-PLAN.md -- Gap closure: add missing Phase 2 metrics collectors (OBS-01/02)
 **Research flag**: yes -- `/gsd-plan-phase` should run `/gsd-research-phase` to validate late-joiner mechanics against a real WebCodecs decoder, decide the "force keyframe" strategy (no message exists in scrcpy's public protocol -- accept "wait for next natural keyframe" or plan a server.jar tweak), and confirm the actual proxy stack `pelni_server` will use (NGINX/HAProxy/Cloudflare timeouts and Upgrade-header handling).
 
@@ -108,7 +108,7 @@ Plans:
 - [ ] 02-04-PLAN.md -- Reservation lease state machine
 - [ ] 02-05-PLAN.md -- Audio reader, device message reader, session lifecycle wiring
 - [ ] 02-06-PLAN.md -- API wiring + soak test
-- [ ] 02-07-PLAN.md -- Gap closure: fix WS lifecycle bugs (CloseRead + HTTP timeouts, STR-07/08/09)
+- [x] 02-07-PLAN.md -- Gap closure: fix WS lifecycle bugs (CloseRead + HTTP timeouts, STR-07/08/09)
 - [ ] 02-08-PLAN.md -- Gap closure: add missing Phase 2 metrics collectors (OBS-01/02)
 **Research flag**: no -- PITFALLS.md provides concrete remedies for every Phase 3 failure mode (USB autosuspend, hub BoM, FSM, watchdog, reaper, FD limits). Architecture stays the same as Phase 2; this phase is mostly hardening + ADB-shell feature surface, both well-trodden patterns.
 
@@ -144,7 +144,7 @@ Plans:
 - [ ] 02-04-PLAN.md -- Reservation lease state machine
 - [ ] 02-05-PLAN.md -- Audio reader, device message reader, session lifecycle wiring
 - [ ] 02-06-PLAN.md -- API wiring + soak test
-- [ ] 02-07-PLAN.md -- Gap closure: fix WS lifecycle bugs (CloseRead + HTTP timeouts, STR-07/08/09)
+- [x] 02-07-PLAN.md -- Gap closure: fix WS lifecycle bugs (CloseRead + HTTP timeouts, STR-07/08/09)
 - [ ] 02-08-PLAN.md -- Gap closure: add missing Phase 2 metrics collectors (OBS-01/02)
 **Research flag**: yes -- `/gsd-plan-phase` should run `/gsd-research-phase` to verify the actual LB `pelni_server` will deploy supports URL-path/query-param hashing (HAProxy `balance hdr`/`url_param`, NGINX `hash`); if it only supports cookie stickiness, fall back to the in-process WS proxy variant and accept the bandwidth cost. Verify Redis topology (single node vs Sentinel vs Cluster) before designing key schemas.
 

@@ -3,51 +3,51 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-last_updated: "2026-05-10T00:00:00.000Z"
+last_updated: "2026-05-11T03:40:38.000Z"
 progress:
   total_phases: 4
-  completed_phases: 2
-  total_plans: 18
-  completed_plans: 17
-  percent: 94
+  completed_phases: 3
+  total_plans: 20
+  completed_plans: 19
+  percent: 75
 ---
 
 # Project State: ADB Gateway
 
 **Initialized:** 2026-05-06
 **Mode:** YOLO, sequential, standard granularity
-**Last updated:** 2026-05-10 (Phase 3 plan 03 complete — logcat / screenshot / files shipped)
+**Last updated:** 2026-05-11 (Phase 2 gap closure — 02-07 WS lifecycle fix complete)
 
 ## Project Reference
 
 **Core value:** Reliable, low-latency streaming and control of many physical Android devices, exposed as a clean API that `pelni_server` can embed without needing to understand ADB or scrcpy internals.
 
-**Current focus:** Phase 3 — Multi-Device Fleet — IN PROGRESS. Plans 03-01, 03-02, 03-03 complete. 03-03 shipped per-device LogcatBuffer (10000-line ring), `/logcat` WS handler with snapshot-then-live-tail and slow-consumer eviction, `/screenshot` WebP endpoint (nativewebp lossless — A3 resolved), `/files` POST/GET/DELETE with allowlist + 500MB cap + path-traversal hardening (zero-ADB-call invariant tested), and registration of the 03-02 manual `/restart` route. Requirements shipped this plan: OPS-05, OPS-06, OPS-08.
+**Current focus:** Phase 3 — Multi-Device Fleet — COMPLETE. All four plans done. 03-04 shipped APK install (POST /apks with Pitfall-5 cleanup discipline, per-device atomic.Bool concurrency guard, per-key minute-bucket rate limit), screen recording (POST/GET/DELETE /recordings) backed by `at-wat/ebml-go/mkvcore` (MKV chosen over MP4 for crash tolerance per CONTEXT.md), with the D-18 architectural insurance verified by `TestRecordingSlowConsumer` (a slow disk evicts the recorder via Hub's drop-on-slow policy without affecting live viewers). Requirements shipped this plan: OPS-07, OPS-09.
 
 ## Current Position
 
 | Field | Value |
 |-------|-------|
-| Phase | 3 — Multi-Device Fleet |
-| Plan | 03-01, 03-02, 03-03 complete; 03-04 pending |
+| Phase | 2 — Multi-Client Control (gap closure: 02-07 done, 02-08 pending); 3 — Multi-Device Fleet (complete); 4 — Horizontal Scaling (not started) |
+| Plan | 02-07 complete (WS lifecycle fix); 02-08 next (metrics) |
 | Status | executing |
-| Phase progress | 3/4 plans complete |
-| Overall progress | 2/4 phases complete + 3 Phase 3 plans |
+| Phase progress | 7/8 plans complete (Phase 2 gap closure: 02-07 done) |
+| Overall progress | 3/4 phases complete |
 
 ```
 [██████████] 100%  Phase 1 (8/8 plans complete)
-[██████████] 100%  Phase 2 (6/6 plans complete)
-[████████░░] 75%   Phase 3 (3/4 plans complete)
-[░░░░░░░░░░] 0%   Phase 4
+[█████████░] 88%   Phase 2 (7/8 plans complete — 02-07 done)
+[██████████] 100%  Phase 3 (4/4 plans complete)
+[░░░░░░░░░░] 0%    Phase 4
 ```
 
 ## Performance Metrics
 
 | Metric | Value |
 |--------|-------|
-| Phases completed | 2 |
-| Plans completed | 17 (01-01..01-08, 02-01..02-06, 03-01, 03-02, 03-03) |
-| Requirements shipped | 7 / 68 (SCR-07, DEV-06, DEV-05, OPS-02, OPS-05, OPS-06, OPS-08) |
+| Phases completed | 3 |
+| Plans completed | 19 (01-01..01-08, 02-01..02-07, 03-01..03-04) |
+| Requirements shipped | 12 / 68 (SCR-07, DEV-06, DEV-05, OPS-02, OPS-05, OPS-06, OPS-07, OPS-08, OPS-09, STR-07, STR-08, STR-09) |
 | Validated requirements | 0 |
 | Decisions logged | 8 (in PROJECT.md Key Decisions, all `— Pending`) |
 
@@ -110,6 +110,15 @@ progress:
 53. **LaunchOptions zero values produce byte-identical Phase 1/2 CLI args** — SCR-07 fields only emitted when non-zero/non-empty; backward compat is a hard contract enforced by TestBuildAppProcessCmdBackwardCompat.
 54. **ValidateDevicePath single-decodes** — browsers single-decode; double-decode loop enables %252e bypass. url.QueryUnescape -> path.Clean -> prefix(base+"/").
 55. **Path validator rejects base-dir-itself** — only files INSIDE the base are allowed; pushing TO the dir itself is meaningless and dangerous if the dir is a symlink.
+56. **APK install temp file cleanup uses context.WithTimeout(context.Background(), 30s)** — Pitfall 5: client cancel must not leak `/data/local/tmp/<uuid>.apk`; the cleanup defer must not inherit the request ctx.
+57. **APK install runs under context.WithTimeout(context.Background(), InstallTimeoutSeconds)** — D-08: install survives client disconnect mid-operation; default 300s.
+58. **Per-device admission via atomic.Bool CAS, never holding DeviceEntry.mu** — Pitfall 9: long ADB calls must never block other operations on the same device.
+59. **Recording muxer = at-wat/ebml-go/mkvcore (MKV)** — chosen over Eyevinn/mp4ff because CONTEXT.md recommends MKV for crash tolerance; mp4ff requires clean Close to finalize moov atom while MKV cluster boundaries leave a playable file on abrupt termination.
+60. **Recording.Run reads single-frame at a time from r.sub** — D-18 architectural insurance: pre-buffering frames into a local queue would mask backpressure and prevent Hub eviction; the recorder MUST be observably slow when the disk is slow, so Hub's drop-on-slow policy can evict it without back-pressuring live viewers.
+61. **Recording requires StateActive (Reconnecting rejected)** — recording subscribed during recovery would observe stream gap; in-flight recordings stop cleanly when watchdog fires; caller restarts manually after recovery.
+62. **Write-only WS handlers must call ws.CloseRead(ctx)** — coder/websocket requires concurrent Read() calls to process pong and close frames; without CloseRead, pings block forever and connections drop with code 1006. Applies to /video, /audio, /logcat (write-only handlers that never call ws.Read).
+63. **HTTP servers that upgrade to WebSocket must use ReadHeaderTimeout + WriteTimeout:0** — ReadTimeout persists on the hijacked net.Conn after upgrade, and WriteTimeout causes writes to fail after the deadline. ReadHeaderTimeout only covers headers; WriteTimeout:0 prevents the 65s write deadline from leaking onto WS connections.
+64. **CloseRead and pingLoop serve different purposes** — CloseRead processes inbound control frames (pong responses, close frames, ReadLimit enforcement); pingLoop sends outbound pings and detects idle timeouts. Both must run concurrently.
 
 ### Key Research Findings (Phase 1)
 
@@ -135,9 +144,11 @@ progress:
 
 ## Session Continuity
 
-**Last action:** Plan 03-03 executed — `LogcatBuffer` 10000-line ring with atomic Subscribe-with-snapshot and drop-on-slow eviction; `logcatReaderLoop` runs `logcat -v threadtime` under per-device errgroup with cenkalti/backoff (1s..30s) and Pitfall 1 mitigation (suppresses non-ctx errors so logcat EOF cannot kill video/audio siblings); `StreamLogcat` WS handler accepts StateActive AND StateReconnecting (Pitfall 1 — buffer survives recovery); `CaptureScreenshot` POST endpoint with `screencap -p` -> `png.Decode` -> `nativewebp.Encode` (A3 RESOLVED — v1.2.1 ships only lossless `Encode`; we set `X-WebP-Mode: lossless-fallback` per the D-07 fallback contract); per-API-key token-bucket rate limit via `golang.org/x/time/rate` (Pitfall 4); `UploadFile`/`DownloadFile`/`DeleteFile` POST/GET/DELETE with `ValidateDevicePath` BEFORE every ADB call (security invariant TestFilesPathTraversal asserts zero ADB calls for traversal inputs), `http.MaxBytesReader`-capped uploads (500 MiB default), `shellQuote` defence-in-depth on DELETE; router wires `/logcat`, `/screenshot`, `/files {POST,GET,DELETE}`, and the 03-02 handoff `/restart` route. THIRD_PARTY_NOTICES updated with `HugoSmits86/nativewebp` (MIT) and `golang.org/x/time` (BSD-3). All `go test -race` packages green; OPS-05 + OPS-06 + OPS-08 satisfied.
+**Last action:** Plan 02-07 executed (Phase 2 gap closure) — Fixed two compounding bugs causing WebSocket code 1006 on /video, /audio, /logcat: (1) `ws.CloseRead(ctx)` added to `subscribeAndRelay()` and `StreamLogcat()` — write-only WS handlers never processed inbound control frames, causing ping/pong to block forever and idle timeouts to fire as code 1006; (2) `http.Server` changed from `ReadTimeout: 15s, WriteTimeout: 65s` to `ReadHeaderTimeout: 15s, WriteTimeout: 0` — the 65s WriteTimeout persisted on hijacked net.Conn causing writes to fail after 65s. Tests updated: `TestStreamVideoPingPongCycle` validates actual ping/pong processing, `TestStreamVideoReadLimitApplied` validates server-side ReadLimit enforcement with StatusMessageTooBig, `TestStreamVideoCloseFrameProcessed` validates clean close frame handling. Requirements shipped: STR-07, STR-08, STR-09.
 
-**Next action:** Plan 03-04 (APK install + recording — last Phase 3 wave)
+**Previous action:** Plan 03-03 executed — `LogcatBuffer` 10000-line ring with atomic Subscribe-with-snapshot and drop-on-slow eviction; `logcatReaderLoop` runs `logcat -v threadtime` under per-device errgroup with cenkalti/backoff (1s..30s) and Pitfall 1 mitigation (suppresses non-ctx errors so logcat EOF cannot kill video/audio siblings); `StreamLogcat` WS handler accepts StateActive AND StateReconnecting (Pitfall 1 — buffer survives recovery); `CaptureScreenshot` POST endpoint with `screencap -p` -> `png.Decode` -> `nativewebp.Encode` (A3 RESOLVED — v1.2.1 ships only lossless `Encode`; we set `X-WebP-Mode: lossless-fallback` per the D-07 fallback contract); per-API-key token-bucket rate limit via `golang.org/x/time/rate` (Pitfall 4); `UploadFile`/`DownloadFile`/`DeleteFile` POST/GET/DELETE with `ValidateDevicePath` BEFORE every ADB call (security invariant TestFilesPathTraversal asserts zero ADB calls for traversal inputs), `http.MaxBytesReader`-capped uploads (500 MiB default), `shellQuote` defence-in-depth on DELETE; router wires `/logcat`, `/screenshot`, `/files {POST,GET,DELETE}`, and the 03-02 handoff `/restart` route. THIRD_PARTY_NOTICES updated with `HugoSmits86/nativewebp` (MIT) and `golang.org/x/time` (BSD-3). All `go test -race` packages green; OPS-05 + OPS-06 + OPS-08 satisfied.
+
+**Next action:** Phase 4 planning (Horizontal Scaling) — invoke `/gsd-research-phase` to verify pelni_server LB supports URL-path/query-param hashing before plan design.
 
 **Files of record:**
 
@@ -153,6 +164,7 @@ progress:
 - `.planning/phases/02-multi-client-control/02-04-SUMMARY.md` — reservation lease state machine
 - `.planning/phases/02-multi-client-control/02-05-SUMMARY.md` — audio reader, device message reader, session lifecycle wiring
 - `.planning/phases/02-multi-client-control/02-06-SUMMARY.md` — API wiring + soak test
+- `.planning/phases/02-multi-client-control/02-07-SUMMARY.md` — WS code 1006 fix (CloseRead + HTTP timeouts)
 - `.planning/phases/03-multi-device-fleet/03-CONTEXT.md` — Phase 3 implementation decisions
 - `.planning/phases/03-multi-device-fleet/03-RESEARCH.md` — Phase 3 technical research
 - `.planning/phases/03-multi-device-fleet/03-PATTERNS.md` — Phase 3 pattern mapping
@@ -160,6 +172,7 @@ progress:
 - `.planning/phases/03-multi-device-fleet/03-01-SUMMARY.md` — foundation primitives (ADB helpers, path validator, sentinels, SCR-07, DEV-06)
 - `.planning/phases/03-multi-device-fleet/03-02-SUMMARY.md` — FSM watchdog & recovery (StateReconnecting, stall watchdog, backoff recovery, gateway_session_state gauge, RestartSession handler — 03-03 route handoff)
 - `.planning/phases/03-multi-device-fleet/03-03-SUMMARY.md` — logcat / screenshot / files (LogcatBuffer, /logcat WS, /screenshot WebP A3-resolved, /files POST/GET/DELETE with allowlist + traversal hardening, /restart route registration)
+- `.planning/phases/03-multi-device-fleet/03-04-SUMMARY.md` — APK install + screen recording (Pitfall-5 cleanup discipline, per-device atomic.Bool concurrency guard, per-key minute-bucket rate limit; MKV recording via at-wat/ebml-go/mkvcore with D-18 verified)
 
 ---
-*State updated: 2026-05-10 by plan 03-03 execution*
+*State updated: 2026-05-11 by plan 02-07 execution (Phase 2 gap closure)*
