@@ -24,6 +24,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/pelni/adb-gateway/internal/obs"
 )
 
 // ReleaseReason classifies why a lease was released. Sent on Lease.ReleaseChan.
@@ -134,6 +136,7 @@ func (m *LeaseManager) Acquire(ownerKey string) (Lease, error) {
 	}
 	l.timer = time.AfterFunc(m.ttl, func() { m.expireFromTimer(l.snapshot.ID) })
 	m.cur = l
+	obs.LeaseAcquiredTotal.Inc()
 	m.log.Info("lease acquired", "lease_id", l.snapshot.ID, "owner_key_fp", fingerprint(ownerKey), "expires_at", l.snapshot.ExpiresAt.Format(time.RFC3339))
 	return l.snapshot, nil
 }
@@ -295,6 +298,7 @@ func (m *LeaseManager) reapLockedLocked(reason ReleaseReason) {
 	default:
 	}
 	close(m.cur.releaseCh)
+	obs.LeaseReleasedTotal.WithLabelValues(string(reason)).Inc()
 	m.log.Info("lease released",
 		"lease_id", m.cur.snapshot.ID,
 		"reason", string(reason),

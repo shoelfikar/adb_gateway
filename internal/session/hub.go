@@ -175,6 +175,7 @@ func (h *Hub) Subscribe(viewerID string) (<-chan []byte, func(), error) {
 	h.mu.Lock()
 	h.viewers[viewerID] = v
 	h.mu.Unlock()
+	obs.HubViewersActive.WithLabelValues(h.stream).Inc()
 	h.log.Debug("viewer subscribed", "viewer_id", viewerID, "preloaded_keyframe", h.keyframeCache.Load() != nil)
 
 	unsub := func() {
@@ -184,6 +185,7 @@ func (h *Hub) Subscribe(viewerID string) (<-chan []byte, func(), error) {
 			delete(h.viewers, viewerID)
 		}
 		h.mu.Unlock()
+		obs.HubViewersActive.WithLabelValues(h.stream).Dec()
 		// Do NOT close v.send here — only the Hub goroutine closes
 		// channels (via evict or shutdown). Closing from the caller
 		// side would race with Hub goroutine sends. The caller's
@@ -228,6 +230,7 @@ func (h *Hub) Run(ctx context.Context) error {
 				case v.send <- msg:
 					v.consecutiveDrops = 0
 					obs.FramesEmittedTotal.WithLabelValues(h.stream).Inc()
+					obs.WSFramesSentTotal.WithLabelValues(h.stream).Inc()
 				default:
 					v.consecutiveDrops++
 					obs.FramesDroppedTotal.WithLabelValues(h.stream).Inc()
@@ -252,6 +255,7 @@ func (h *Hub) evict(v *viewer, reason string) {
 		delete(h.viewers, v.id)
 	}
 	h.mu.Unlock()
+	obs.HubViewersActive.WithLabelValues(h.stream).Dec()
 	close(v.send)
 	h.log.Info("viewer evicted",
 		"viewer_id", v.id,
