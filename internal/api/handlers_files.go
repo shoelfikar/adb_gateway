@@ -1,8 +1,13 @@
 // Package api — handlers_files.go implements OPS-08:
 //
-//	POST   /devices/{serial}/files?path=<absolute>   stream-push (D-13/D-14)
-//	GET    /devices/{serial}/files?path=<absolute>   sync pull   (D-15)
-//	DELETE /devices/{serial}/files?path=<absolute>   shell rm -f (D-16)
+//	POST   /devices/{serial}/files?path=<absolute>                stream-push (D-13/D-14)
+//	GET    /devices/{serial}/files?path=<absolute>                sync pull   (D-15)
+//	DELETE /devices/{serial}/files?path=<absolute>               shell rm -f (D-16)
+//	DELETE /devices/{serial}/files?path=<absolute>&recursive=1    shell rm -rf (D-FB-10)
+//
+// Recursive delete is opt-in; default behavior is single-file rm -f (Phase 3
+// D-16). Single-flight applies ONLY to the recursive branch (Pitfall 9 —
+// guard scope minimized).
 //
 // Every handler validates the requested path BEFORE issuing any ADB call
 // (D-11): the path is single-URL-decoded, path.Clean'd, then prefix-checked
@@ -11,8 +16,8 @@
 // (the security invariant in 03-VALIDATION.md).
 //
 // Defence in depth: DeleteFile additionally shell-quotes the cleaned path
-// before splicing into `rm -f`. shellQuote wraps in single quotes and
-// escapes any embedded single quote (`' -> '\''`) — this is belt-and-braces
+// before splicing into `rm -f` or `rm -rf`. shellQuote wraps in single quotes
+// and escapes any embedded single quote (`' -> '\''`) — this is belt-and-braces
 // because ValidateDevicePath already canonicalizes shell metachars away.
 package api
 
@@ -26,6 +31,7 @@ import (
 	"os"
 	"path"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -140,13 +146,17 @@ func DownloadFileForTest(registry *session.Registry, runner FileShellRunner, cfg
 }
 
 // DeleteFileForTest builds the delete handler with an injectable runner.
+// Supports ?recursive=1 for recursive tree delete (D-FB-10), gated by
+// DeviceEntry.WriteInFlight single-flight. Default (no recursive flag)
+// preserves Phase 3 single-file rm -f behavior unchanged.
 func DeleteFileForTest(registry *session.Registry, runner FileShellRunner, cfg *config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		serial, ok := validateSerial(w, r)
 		if !ok {
 			return
 		}
-		if _, ok := registry.Get(serial); !ok {
+		entry, ok := registry.Get(serial)
+		if !ok {
 			writeError(w, ErrDeviceNotFound)
 			return
 		}
@@ -156,6 +166,36 @@ func DeleteFileForTest(registry *session.Registry, runner FileShellRunner, cfg *
 			return
 		}
 
+		recursive := r.URL.Query().Get("recursive") == "1"
+
+		if recursive {
+			// Acquire WriteInFlight single-flight gate (Pitfall 9).
+			if !entry.WriteInFlight.CompareAndSwap(false, true) {
+				writeError(w, ErrDeviceBusy)
+				return
+			}
+			defer entry.WriteInFlight.Store(false)
+
+			// Bounded ctx independent of r.Context() (Pitfall 3 — recursive
+			// delete must survive client disconnect).
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+			defer cancel()
+
+			cmd := "rm -rf " + shellQuote(cleaned)
+			if _, err := runner.ShellRunRaw(ctx, serial, cmd); err != nil {
+				slog.Warn("files: rm -rf failed", "device", serial, "path", cleaned, "error", err)
+				writeError(w, ErrADBUnavailable)
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]any{
+				"status":    "deleted",
+				"path":      cleaned,
+				"recursive": true,
+			})
+			return
+		}
+
+		// Phase 3 single-file rm -f (D-16) — unchanged.
 		cmd := "rm -f " + shellQuote(cleaned)
 		if _, err := runner.ShellRunRaw(r.Context(), serial, cmd); err != nil {
 			slog.Warn("files: rm failed", "device", serial, "path", cleaned, "error", err)
