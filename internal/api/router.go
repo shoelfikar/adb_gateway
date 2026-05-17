@@ -53,10 +53,29 @@ func NewRouter(cfg *config.Config, registry *session.Registry, adbClient *adb.Cl
 				// Phase 3 Plan 03-03 endpoints.
 				r.Get("/logcat", StreamLogcat(registry, origins, cfg))             // OPS-05
 				r.Post("/screenshot", CaptureScreenshot(registry, hostServices, cfg)) // OPS-06
-				r.Route("/files", func(r chi.Router) {                              // OPS-08
-					r.Post("/", UploadFile(registry, hostServices, cfg))
-					r.Get("/", DownloadFile(registry, hostServices, cfg))
-					r.Delete("/", DeleteFile(registry, hostServices, cfg))
+
+				// Phase 3 + 03.1 — file browser + file ops.
+				// Per CONTEXT.md Claude's Discretion, read ops (list/stat/details/download/apk-export)
+				// share NO bucket (cheap shell calls); write ops (mkdir/upload/upload-folder/
+				// rename/recursive-delete/backup/uninstall) share the fileappWriteLimiter at
+				// 30/min/key. Tuning hook: cfg.Files.WritesPerMinutePerKey if added later.
+				fileappWriteLimiter := newKeyLimiter(30.0) // 30 writes/min/key
+				filesDispatcher := NewFilesDispatcher(
+					ListFiles(registry, hostServices, cfg),      // op=list (REQ-FB-LIST)
+					StatFile(registry, hostServices, cfg),       // op=stat (REQ-FB-STAT)
+					DownloadFile(registry, hostServices, cfg),   // no op (Phase 3 compat)
+					MkdirFile(registry, hostServices, cfg),      // op=mkdir (REQ-FB-MKDIR)
+					UploadFile(registry, hostServices, cfg),     // no op (Phase 3 compat)
+					UploadFolder(registry, hostServices, cfg),  // op=upload-folder (REQ-FB-UPLOAD-FOLDER)
+					DownloadFolder(registry, hostServices, cfg), // op=download-folder (REQ-FB-DOWNLOAD-FOLDER)
+					RenameFile(registry, hostServices, cfg),    // op=rename (REQ-FB-RENAME)
+					DeleteFile(registry, hostServices, cfg),     // no op / ?recursive=1 (REQ-FB-DELETE-REC)
+				)
+				r.Route("/files", func(r chi.Router) { // OPS-08 + Phase 03.1
+					r.Get("/", filesDispatcher.Get)
+					r.With(requireWriteRateLimit(fileappWriteLimiter)).Post("/", filesDispatcher.Post)
+					r.With(requireWriteRateLimit(fileappWriteLimiter)).Patch("/", filesDispatcher.Patch)
+					r.With(requireWriteRateLimit(fileappWriteLimiter)).Delete("/", filesDispatcher.Delete)
 				})
 
 				// Phase 3 Plan 03-04 endpoints.
@@ -64,6 +83,20 @@ func NewRouter(cfg *config.Config, registry *session.Registry, adbClient *adb.Cl
 				r.Post("/recordings", StartRecording(registry, cfg))     // OPS-09
 				r.Get("/recordings", ListRecordings(registry))           // OPS-09
 				r.Delete("/recordings/{id}", StopRecording(registry))    // OPS-09
+
+				// Phase 03.1 — app manager (plans 04-06).
+				r.Route("/apps", func(r chi.Router) {
+					// Read: list — no rate limit (REQ-AM-LIST)
+					r.Get("/", ListApps(registry, hostServices, cfg))
+					r.Route("/{pkg}", func(r chi.Router) {
+						// Read: details + apk export — no rate limit (REQ-AM-DETAILS, REQ-AM-APK-EXPORT)
+						r.Get("/", GetAppDetails(registry, hostServices, cfg))
+						r.Get("/apk", ExportAPK(registry, hostServices, cfg))
+						// Write: backup + uninstall — rate-limited (REQ-AM-BACKUP, REQ-AM-UNINSTALL)
+						r.With(requireWriteRateLimit(fileappWriteLimiter)).Post("/backup", BackupApp(registry, hostServices, cfg))
+						r.With(requireWriteRateLimit(fileappWriteLimiter)).Delete("/", UninstallApp(registry, hostServices, cfg))
+					})
+				})
 
 				// Phase 3 Plan 03-02 handoff: manual restart of a sticky-Failed
 				// device. The launcher factory is constructed per call so a
