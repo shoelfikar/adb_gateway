@@ -216,12 +216,29 @@ func truncate(s string, n int) string {
 // keyLimiter is a per-key token bucket sized for "N ops per minute".
 // Bucket burst = N (so a fresh key gets N before the per-minute drip kicks in,
 // matching CONTEXT.md "X/min/key" semantics with full burst).
+//
+// Stale eviction: each bucket tracks lastAccess. On every Allow() call,
+// entries not accessed in the last 10 minutes are evicted. If the map
+// exceeds maxBuckets (10000) before inserting a new key, the oldest
+// entries are pruned first. This prevents unbounded memory growth from
+// key rotation or many distinct anonymous clients (CR-03).
 type keyLimiter struct {
-	mu      sync.Mutex
-	rate    rate.Limit
-	burst   int
-	buckets map[string]*rate.Limiter
+	mu         sync.Mutex
+	rate       rate.Limit
+	burst      int
+	buckets    map[string]*bucketEntry
+	maxBuckets int
 }
+
+type bucketEntry struct {
+	limiter   *rate.Limiter
+	lastAccess time.Time
+}
+
+const (
+	keyLimiterStaleTTL  = 10 * time.Minute
+	keyLimiterMaxBuckets = 10000
+)
 
 func newKeyLimiter(perMin float64) *keyLimiter {
 	if perMin <= 0 {
@@ -234,21 +251,64 @@ func newKeyLimiter(perMin float64) *keyLimiter {
 		burst = 1
 	}
 	return &keyLimiter{
-		rate:    limit,
-		burst:   burst,
-		buckets: make(map[string]*rate.Limiter),
+		rate:       limit,
+		burst:      burst,
+		buckets:    make(map[string]*bucketEntry),
+		maxBuckets: keyLimiterMaxBuckets,
 	}
 }
 
 func (l *keyLimiter) Allow(key string) bool {
+	now := time.Now()
 	l.mu.Lock()
-	lim, ok := l.buckets[key]
-	if !ok {
-		lim = rate.NewLimiter(l.rate, l.burst)
-		l.buckets[key] = lim
+	entry, ok := l.buckets[key]
+	if ok {
+		entry.lastAccess = now
+	} else {
+		// Evict stale entries before adding a new one.
+		l.evictStale(now)
+		// If still at cap, prune oldest entries.
+		if len(l.buckets) >= l.maxBuckets {
+			l.evictOldest()
+		}
+		entry = &bucketEntry{
+			limiter:    rate.NewLimiter(l.rate, l.burst),
+			lastAccess: now,
+		}
+		l.buckets[key] = entry
 	}
 	l.mu.Unlock()
-	return lim.Allow()
+	return entry.limiter.Allow()
+}
+
+// evictStale removes entries not accessed within keyLimiterStaleTTL.
+// Caller must hold l.mu.
+func (l *keyLimiter) evictStale(now time.Time) {
+	cutoff := now.Add(-keyLimiterStaleTTL)
+	for k, e := range l.buckets {
+		if e.lastAccess.Before(cutoff) {
+			delete(l.buckets, k)
+		}
+	}
+}
+
+// evictOldest removes the oldest entries until the map is below cap.
+// Caller must hold l.mu.
+func (l *keyLimiter) evictOldest() {
+	// Find the oldest entry and remove it; repeat until under cap.
+	for len(l.buckets) >= l.maxBuckets {
+		var oldestKey string
+		var oldestTime time.Time
+		first := true
+		for k, e := range l.buckets {
+			if first || e.lastAccess.Before(oldestTime) {
+				oldestKey = k
+				oldestTime = e.lastAccess
+				first = false
+			}
+		}
+		delete(l.buckets, oldestKey)
+	}
 }
 
 // requireWriteRateLimit returns a middleware that token-bucket-limits per
