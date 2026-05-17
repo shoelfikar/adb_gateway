@@ -62,7 +62,7 @@ func InstallAPK(registry *session.Registry, hostServices *adb.HostServices, cfg 
 
 // InstallAPKForTest builds the APK install handler with an injectable runner.
 func InstallAPKForTest(registry *session.Registry, runner APKShellRunner, cfg *config.Config) http.HandlerFunc {
-	rl := newAPKKeyLimiter(cfg.APK.InstallsPerMinutePerKey)
+	rl := newKeyLimiter(cfg.APK.InstallsPerMinutePerKey)
 	return func(w http.ResponseWriter, r *http.Request) {
 		serial, ok := validateSerial(w, r)
 		if !ok {
@@ -213,17 +213,17 @@ func truncate(s string, n int) string {
 	return s[:n]
 }
 
-// apkKeyLimiter is a per-key token bucket sized for "N installs per minute".
+// keyLimiter is a per-key token bucket sized for "N ops per minute".
 // Bucket burst = N (so a fresh key gets N before the per-minute drip kicks in,
-// matching CONTEXT.md "5/min/key" semantics with full burst).
-type apkKeyLimiter struct {
+// matching CONTEXT.md "X/min/key" semantics with full burst).
+type keyLimiter struct {
 	mu      sync.Mutex
 	rate    rate.Limit
 	burst   int
 	buckets map[string]*rate.Limiter
 }
 
-func newAPKKeyLimiter(perMin float64) *apkKeyLimiter {
+func newKeyLimiter(perMin float64) *keyLimiter {
 	if perMin <= 0 {
 		perMin = 5.0
 	}
@@ -233,14 +233,14 @@ func newAPKKeyLimiter(perMin float64) *apkKeyLimiter {
 	if burst < 1 {
 		burst = 1
 	}
-	return &apkKeyLimiter{
+	return &keyLimiter{
 		rate:    limit,
 		burst:   burst,
 		buckets: make(map[string]*rate.Limiter),
 	}
 }
 
-func (l *apkKeyLimiter) Allow(key string) bool {
+func (l *keyLimiter) Allow(key string) bool {
 	l.mu.Lock()
 	lim, ok := l.buckets[key]
 	if !ok {
@@ -249,4 +249,27 @@ func (l *apkKeyLimiter) Allow(key string) bool {
 	}
 	l.mu.Unlock()
 	return lim.Allow()
+}
+
+// requireWriteRateLimit returns a middleware that token-bucket-limits per
+// owner-key. Caller constructs one keyLimiter per logical bucket (e.g.
+// "fileapp_write") and shares it across the relevant handlers.
+func requireWriteRateLimit(limiter *keyLimiter) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			key := ownerKeyFromRequest(r)
+			if key == "" {
+				key = "anon"
+			}
+			if !limiter.Allow(key) {
+				writeError(w, &DomainError{
+					Code:       "RATE_LIMITED",
+					HTTPStatus: http.StatusTooManyRequests,
+					Message:    "Write-op rate limit exceeded for this API key",
+				})
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
 }
