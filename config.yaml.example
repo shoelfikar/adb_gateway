@@ -1,0 +1,72 @@
+# ADB Gateway Configuration
+# See --help for all options, --version for build info, --licenses for notices.
+
+# Network
+listen_addr: "127.0.0.1:8080"   # Bind address (default 127.0.0.1:8080)
+adb_addr: "localhost:5037"      # ADB server address (default localhost:5037)
+log_level: "info"               # debug, info, warn, error (default info)
+
+# Authentication (required)
+# Set via environment ADB_GW_API_KEY_PRIMARY / ADB_GW_API_KEY_SECONDARY for production.
+api_key_primary: "change-me-in-production"
+# api_key_secondary: ""  # Optional; enables zero-downtime key rotation
+
+# CORS
+# allowed_origins: "https://example.com,https://app.example.com"  # Comma-separated; empty = allow all
+
+# Stream settings (Phase 2)
+stream:
+  audio_enabled: true               # Enable audio stream (default true)
+  viewer_buffer_frames: 60          # Per-viewer buffer (default 60)
+  max_consecutive_drops: 120        # Drop-on-slow eviction threshold (default 120)
+
+# Lease / reservation (Phase 2)
+control:
+  lease_ttl_seconds: 60            # Reservation TTL (default 60, minimum 5)
+
+# WebSocket lifecycle (Phase 2)
+ws:
+  ping_interval_seconds: 25         # Outbound ping interval (default 25)
+  idle_timeout_seconds: 90          # Idle timeout (default 90, must be > ping_interval)
+  read_limit_bytes: 4194304         # Max WS message size (default 4 MiB)
+
+# scrcpy launcher tunables (Phase 3 SCR-07)
+scrcpy:
+  codec: "h264"           # h264 | h265 | av1 (default h264)
+  max_size: 0             # px, 0 = device default
+  bit_rate: 0             # bps, 0 = server default
+  max_fps: 0              # 0 = unlimited
+  audio_codec: "opus"     # opus | aac | raw | flac (default opus)
+  audio_source: "output" # output | mic | playback (default output)
+
+# Logcat ring buffer (Phase 3 OPS-05)
+logcat:
+  ring_buffer_lines: 10000  # Per-device retroactive buffer (default 10000)
+
+# Screenshot (Phase 3 OPS-06)
+screenshot:
+  default_quality: 80          # WebP quality 1..100 (default 80)
+  rate_per_sec_per_key: 5.0   # Rate limit per API key (default 5.0)
+
+# Phase 3 + 03.1 — file browser (list/stat/mkdir/rename/upload/download/delete)
+# NOTE: Phase 03.1 introduces no new required config keys; defaults inherited from above.
+files:
+  # Allowlist of on-device base directories. Used by every /files endpoint
+  # (list, stat, mkdir, rename, upload, download, upload-folder, download-folder, delete).
+  allowed_base_paths:
+    - /sdcard/
+    - /data/local/tmp/
+  # Cap on single-file upload AND tar request body for op=upload-folder (bytes).
+  max_upload_bytes: 524288000  # 500 MiB
+
+# Phase 3 + 03.1 — APK install AND app manager backup reuse install_timeout_seconds.
+apk:
+  max_bytes: 524288000               # 500 MiB
+  install_timeout_seconds: 300       # Also bounds bu backup (Phase 03.1 D-AM-05)
+  installs_per_minute_per_key: 5.0   # Per-key rate limit for APK install
+
+# Recording (Phase 3 OPS-09)
+recording:
+  dir: "./recordings"                # On-disk directory for recordings
+  max_file_bytes: 2147483648         # 2 GiB per recording file before rotation
+  container: "mkv"                    # Container format (mkv only for now)
