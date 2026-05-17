@@ -2,7 +2,7 @@ package api
 
 import (
 	"encoding/json"
-	"fmt"
+	"log/slog"
 	"net/http"
 )
 
@@ -91,14 +91,17 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 }
 
 // mapError converts an internal error into a DomainError for API responses.
-// This is a convenience function for mapping common error patterns.
+// Per D-09, no internal error details leak to the API consumer. The raw
+// error is logged server-side for debugging.
 func mapError(err error) *DomainError {
 	if domain, ok := err.(*DomainError); ok {
 		return domain
 	}
+	// Log the internal error for debugging, but do not surface it.
+	slog.Error("internal error mapped to DomainError", "error", err)
 	return &DomainError{
 		Code:       "INTERNAL_ERROR",
 		HTTPStatus: http.StatusInternalServerError,
-		Message:    fmt.Sprintf("An internal error occurred: %v", err),
+		Message:    "An internal error occurred",
 	}
 }
