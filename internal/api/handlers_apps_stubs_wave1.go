@@ -46,16 +46,3 @@ func ExportAPKForTest(_ *session.Registry, _ FileShellRunner, _ *config.Config) 
 	}
 }
 
-// UploadFolderForTest is a stub for plan 03. Returns 501.
-func UploadFolderForTest(_ *session.Registry, _ FileShellRunner, _ *config.Config) http.HandlerFunc {
-	return func(w http.ResponseWriter, _ *http.Request) {
-		writeError(w, &DomainError{Code: "NOT_IMPLEMENTED", HTTPStatus: http.StatusNotImplemented, Message: "UploadFolder: plan 03"})
-	}
-}
-
-// DownloadFolderForTest is a stub for plan 03. Returns 501.
-func DownloadFolderForTest(_ *session.Registry, _ FileShellRunner, _ *config.Config) http.HandlerFunc {
-	return func(w http.ResponseWriter, _ *http.Request) {
-		writeError(w, &DomainError{Code: "NOT_IMPLEMENTED", HTTPStatus: http.StatusNotImplemented, Message: "DownloadFolder: plan 03"})
-	}
-}
