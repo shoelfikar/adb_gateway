@@ -27,7 +27,6 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 
 	"github.com/pelni/adb-gateway/internal/config"
 	"github.com/pelni/adb-gateway/internal/session"
@@ -111,7 +110,7 @@ func setupBackupRouter(registry *session.Registry, runner FileShellRunner, cfg *
 // with BACKUP_FAILED code, NOT octet-stream.
 func TestBackup_EmptyStreamBeforeHeaders(t *testing.T) {
 	registry := session.NewRegistry()
-	registry.GetOrCreate("ABC123").SetState(session.Active)
+	registry.GetOrCreate("ABC123").SetState(session.StateActive)
 
 	runner := newRecordingBackupRunner()
 	runner.shellV2Fn = func(ctx context.Context, cmd string) (io.ReadCloser, io.ReadCloser, <-chan int, error) {
@@ -147,7 +146,7 @@ func TestBackup_EmptyStreamBeforeHeaders(t *testing.T) {
 // n==4 -> commit headers + stream peek + remainder.
 func TestBackup_StrictPeek4bytes(t *testing.T) {
 	registry := session.NewRegistry()
-	registry.GetOrCreate("ABC123").SetState(session.Active)
+	registry.GetOrCreate("ABC123").SetState(session.StateActive)
 
 	runner := newRecordingBackupRunner()
 	runner.shellV2Fn = func(ctx context.Context, cmd string) (io.ReadCloser, io.ReadCloser, <-chan int, error) {
@@ -180,7 +179,7 @@ func TestBackup_StrictPeek4bytes(t *testing.T) {
 // commits octet-stream headers and streams the full payload (D-AM-05).
 func TestBackup_NonEmptyStream(t *testing.T) {
 	registry := session.NewRegistry()
-	registry.GetOrCreate("ABC123").SetState(session.Active)
+	registry.GetOrCreate("ABC123").SetState(session.StateActive)
 
 	backupData := "ANDROID BACKUP\n" + strings.Repeat("x", 1024)
 	runner := newRecordingBackupRunner()
@@ -214,7 +213,7 @@ func TestBackup_NonEmptyStream(t *testing.T) {
 func TestBackup_SingleFlight(t *testing.T) {
 	registry := session.NewRegistry()
 	entry := registry.GetOrCreate("ABC123")
-	entry.SetState(session.Active)
+	entry.SetState(session.StateActive)
 
 	started := make(chan struct{})
 	release := make(chan struct{})
@@ -268,7 +267,7 @@ func TestBackup_SingleFlight(t *testing.T) {
 // INVALID_PACKAGE with zero ShellV2Stream calls (pkg regex invariant).
 func TestBackup_InvalidPkg(t *testing.T) {
 	registry := session.NewRegistry()
-	registry.GetOrCreate("ABC123").SetState(session.Active)
+	registry.GetOrCreate("ABC123").SetState(session.StateActive)
 
 	runner := newRecordingBackupRunner()
 	cfg := browseTestConfig()

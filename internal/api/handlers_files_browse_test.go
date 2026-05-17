@@ -130,7 +130,9 @@ func TestListFiles_PathTraversalZeroCalls(t *testing.T) {
 		{"parent-traversal", "/sdcard/../etc/passwd"},
 		{"absolute-outside", "/etc/shadow"},
 		{"url-encoded-dots", "/sdcard/%2e%2e/foo"},
-		{"null-byte", "/sdcard/\x00/foo"},
+		// null-byte omitted: httptest.NewRequest panics on control chars in URLs;
+		// ValidateDevicePath rejects null bytes at the URL-decode step, which is
+		// covered by path_validate_test.go.
 		{"base-dir-itself", "/sdcard/"},
 	}
 
@@ -187,10 +189,16 @@ func TestMkdir_Idempotent(t *testing.T) {
 	cfg := browseTestConfig()
 	r := setupBrowseRouter(registry, runner, cfg)
 
-	// First call: directory does not exist yet.
+	// Track test -d call count: first call returns empty (dir does not exist),
+	// second call returns "exists" (dir now exists after mkdir -p).
+	var testDCalls int32
 	runner.shellFn = func(ctx context.Context, cmd string) ([]byte, error) {
 		if strings.Contains(cmd, "test -d") {
-			return []byte(""), nil // exit 0 => exists for second call
+			n := atomic.AddInt32(&testDCalls, 1)
+			if n >= 2 {
+				return []byte("exists"), nil // second call: dir exists
+			}
+			return []byte(""), nil // first call: dir does not exist
 		}
 		return nil, nil
 	}
@@ -217,9 +225,7 @@ func TestMkdir_Idempotent(t *testing.T) {
 func TestRename_DualPathValidation(t *testing.T) {
 	registry := session.NewRegistry()
 	registry.GetOrCreate("ABC123").SetState(session.StateActive)
-	runner := newRecordingBrowseRunner()
 	cfg := browseTestConfig()
-	r := setupBrowseRouter(registry, runner, cfg)
 
 	tests := []struct {
 		name string
@@ -317,17 +323,14 @@ func TestDelete_Recursive_SingleFlight(t *testing.T) {
 	started := make(chan struct{})
 	release := make(chan struct{})
 	runner := newRecordingBrowseRunner()
-	runner.shellV2Fn = func(ctx context.Context, cmd string) (io.ReadCloser, io.ReadCloser, <-chan int, error) {
+	// The handler uses ShellRunRaw for rm -rf (not ShellV2Stream), so the
+	// blocking must be in shellFn, not shellV2Fn.
+	runner.shellFn = func(ctx context.Context, cmd string) ([]byte, error) {
 		if strings.Contains(cmd, "rm -rf") {
 			close(started)
 			<-release
 		}
-		ch := make(chan int, 1)
-		ch <- 0
-		close(ch)
-		return io.NopCloser(strings.NewReader("")),
-			io.NopCloser(strings.NewReader("")),
-			ch, nil
+		return nil, nil
 	}
 
 	cfg := browseTestConfig()

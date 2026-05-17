@@ -3,7 +3,6 @@
 package api
 
 import (
-	"bytes"
 	"context"
 	"io"
 	"net/http"
@@ -148,7 +147,7 @@ func TestApps_InvalidPkg_ZeroShellCalls(t *testing.T) {
 // for listing apps (D-AM-03/D-AM-04).
 func TestListApps_DefaultUserOnly_ExactCommand(t *testing.T) {
 	registry := session.NewRegistry()
-	registry.GetOrCreate("ABC123").SetState(session.Active)
+	registry.GetOrCreate("ABC123").SetState(session.StateActive)
 
 	var capturedCmd string
 	runner := newRecordingAppsRunner()
@@ -158,7 +157,6 @@ func TestListApps_DefaultUserOnly_ExactCommand(t *testing.T) {
 	}
 
 	cfg := browseTestConfig()
-	r := setupAppsRouter(registry, runner, cfg)
 
 	tests := []struct {
 		name           string
@@ -207,7 +205,7 @@ func TestListApps_DefaultUserOnly_ExactCommand(t *testing.T) {
 // package name via ?name= query parameter (D-AM-03).
 func TestListApps_NameFilter(t *testing.T) {
 	registry := session.NewRegistry()
-	registry.GetOrCreate("ABC123").SetState(session.Active)
+	registry.GetOrCreate("ABC123").SetState(session.StateActive)
 
 	pmOutput := "package:com.foo.bar versionCode:42 installer=com.android.vending uid:10123\n" +
 		"package:com.baz.qux versionCode:7 installer=null uid:10456\n" +
@@ -235,7 +233,7 @@ func TestListApps_NameFilter(t *testing.T) {
 // LIST_FAILED (D-ERR-01).
 func TestListApps_FailureMapping(t *testing.T) {
 	registry := session.NewRegistry()
-	registry.GetOrCreate("ABC123").SetState(session.Active)
+	registry.GetOrCreate("ABC123").SetState(session.StateActive)
 
 	runner := newRecordingAppsRunner()
 	runner.shellFn = func(ctx context.Context, cmd string) ([]byte, error) {
@@ -258,7 +256,7 @@ func TestListApps_FailureMapping(t *testing.T) {
 // (shellQuote single-quotes) and returns parsed details (D-AM-04).
 func TestDetails_DumpsysCmd(t *testing.T) {
 	registry := session.NewRegistry()
-	registry.GetOrCreate("ABC123").SetState(session.Active)
+	registry.GetOrCreate("ABC123").SetState(session.StateActive)
 
 	var capturedCmd string
 	dumpsysOutput := `Packages:
@@ -302,7 +300,7 @@ func TestDetails_DumpsysCmd(t *testing.T) {
 // "not installed" semantics maps to 404 PACKAGE_NOT_FOUND (D-AM-08).
 func TestUninstall_PackageNotFound(t *testing.T) {
 	registry := session.NewRegistry()
-	registry.GetOrCreate("ABC123").SetState(session.Active)
+	registry.GetOrCreate("ABC123").SetState(session.StateActive)
 
 	runner := newRecordingAppsRunner()
 	runner.shellV2Fn = func(ctx context.Context, cmd string) (io.ReadCloser, io.ReadCloser, <-chan int, error) {
@@ -330,7 +328,7 @@ func TestUninstall_PackageNotFound(t *testing.T) {
 // "not installed" semantics maps to 500 UNINSTALL_FAILED (D-AM-08).
 func TestUninstall_GenericFailure(t *testing.T) {
 	registry := session.NewRegistry()
-	registry.GetOrCreate("ABC123").SetState(session.Active)
+	registry.GetOrCreate("ABC123").SetState(session.StateActive)
 
 	runner := newRecordingAppsRunner()
 	runner.shellV2Fn = func(ctx context.Context, cmd string) (io.ReadCloser, io.ReadCloser, <-chan int, error) {
@@ -360,7 +358,7 @@ func TestUninstall_GenericFailure(t *testing.T) {
 func TestUninstall_Success_SingleFlight(t *testing.T) {
 	registry := session.NewRegistry()
 	entry := registry.GetOrCreate("ABC123")
-	entry.SetState(session.Active)
+	entry.SetState(session.StateActive)
 
 	started := make(chan struct{})
 	release := make(chan struct{})

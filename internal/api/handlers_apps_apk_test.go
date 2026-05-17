@@ -4,7 +4,6 @@ package api
 
 import (
 	"archive/tar"
-	"bytes"
 	"context"
 	"io"
 	"net/http"
@@ -109,7 +108,7 @@ func setupApkExportRouter(registry *session.Registry, runner FileShellRunner, cf
 // correct filename ending in .apk (D-AM-06).
 func TestAPKExport_SinglePath(t *testing.T) {
 	registry := session.NewRegistry()
-	registry.GetOrCreate("ABC123").SetState(session.Active)
+	registry.GetOrCreate("ABC123").SetState(session.StateActive)
 
 	runner := newRecordingApkRunner()
 	runner.shellFn = func(ctx context.Context, cmd string) ([]byte, error) {
@@ -138,7 +137,7 @@ func TestAPKExport_SinglePath(t *testing.T) {
 // containing entries for each APK (D-AM-06).
 func TestAPKExport_SplitAPK_Tar(t *testing.T) {
 	registry := session.NewRegistry()
-	registry.GetOrCreate("ABC123").SetState(session.Active)
+	registry.GetOrCreate("ABC123").SetState(session.StateActive)
 
 	runner := newRecordingApkRunner()
 	runner.shellFn = func(ctx context.Context, cmd string) ([]byte, error) {
@@ -183,7 +182,7 @@ func TestAPKExport_SplitAPK_Tar(t *testing.T) {
 // 404 PACKAGE_NOT_FOUND (D-AM-08).
 func TestAPKExport_PackageNotFound(t *testing.T) {
 	registry := session.NewRegistry()
-	registry.GetOrCreate("ABC123").SetState(session.Active)
+	registry.GetOrCreate("ABC123").SetState(session.StateActive)
 
 	runner := newRecordingApkRunner()
 	runner.shellFn = func(ctx context.Context, cmd string) ([]byte, error) {
@@ -210,7 +209,7 @@ func TestAPKExport_PackageNotFound(t *testing.T) {
 // with only the base. No base-only fallback.
 func TestAPKExport_NoBaseOnlyFallback(t *testing.T) {
 	registry := session.NewRegistry()
-	registry.GetOrCreate("ABC123").SetState(session.Active)
+	registry.GetOrCreate("ABC123").SetState(session.StateActive)
 
 	runner := newRecordingApkRunner()
 	runner.shellFn = func(ctx context.Context, cmd string) ([]byte, error) {
