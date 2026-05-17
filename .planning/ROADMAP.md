@@ -140,7 +140,7 @@ Plans:
 - [x] 03.1-04-PLAN.md — Wave 1: app manager list, details, uninstall (with WriteInFlight + Pitfall-4 error mapping)
 - [x] 03.1-05-PLAN.md — Wave 1: bu backup stream with peek-before-headers contract
 - [x] 03.1-06-PLAN.md — Wave 1: APK export single/tar with no base-only fallback
-- [ ] 03.1-07-PLAN.md — Wave 2: router wiring, FilesDispatcher op-verb dispatch, write-op rate limiter, human-verify smoke test
+- [x] 03.1-07-PLAN.md — Wave 2: router wiring, FilesDispatcher op-verb dispatch, write-op rate limiter, human-verify smoke test
 
 ### Phase 4: Horizontal Scaling
 
