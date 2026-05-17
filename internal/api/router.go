@@ -45,6 +45,7 @@ func NewRouter(cfg *config.Config, registry *session.Registry, adbClient *adb.Cl
 				r.Get("/video", StreamVideo(registry, origins, cfg))
 				r.Get("/audio", StreamAudio(registry, origins, cfg))
 				r.Get("/control", StreamControl(registry, origins, cfg))
+				r.Get("/session", StreamSession(registry, origins, cfg))
 				r.Post("/reservation", CreateReservation(registry))
 				r.Patch("/reservation", ExtendReservation(registry))
 				r.Delete("/reservation", ReleaseReservation(registry))
