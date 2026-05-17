@@ -111,7 +111,10 @@ func TestApps_InvalidPkg_ZeroShellCalls(t *testing.T) {
 		{"numeric-start", "123.bad"},
 		{"no-dot", "nodot"},
 		{"shell-inject", ";rm"},
-		{"empty", ""},
+		// "empty" pkg case removed: chi routes /apps/ to the list handler (GET /),
+		// never reaching /{pkg}. validatePackage handles empty correctly when
+		// called, but httptest.NewRequest cannot exercise the route. The empty
+		// case is covered by pkg_validate_test.go direct regex testing.
 		{"too-long", strings.Repeat("a", 257)},
 	}
 

@@ -32,6 +32,7 @@ type PkgDetail struct {
 	APKSigningVersion    int       `json:"apk_signing_version"`
 	RequestedPermissions []string  `json:"requested_permissions"`
 	GrantedPermissions   []string  `json:"granted_permissions"`
+	TotalSizeBytes       int64     `json:"total_size_bytes,omitempty"` // populated by ?include_size=1 via du
 }
 
 var (
