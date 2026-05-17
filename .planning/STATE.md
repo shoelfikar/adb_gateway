@@ -2,14 +2,14 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: executing
-last_updated: "2026-05-11T04:00:00.000Z"
+status: Executing Phase 03.1
+last_updated: "2026-05-17T06:33:00.571Z"
 progress:
-  total_phases: 4
+  total_phases: 5
   completed_phases: 3
-  total_plans: 20
+  total_plans: 28
   completed_plans: 20
-  percent: 100
+  percent: 71
 ---
 
 # Project State: ADB Gateway
@@ -22,10 +22,12 @@ progress:
 
 **Core value:** Reliable, low-latency streaming and control of many physical Android devices, exposed as a clean API that `pelni_server` can embed without needing to understand ADB or scrcpy internals.
 
-**Current focus:** Phase 2 gap closure COMPLETE. 02-07 fixed WS lifecycle bugs (ws.CloseRead on /video, /audio, /logcat; WriteTimeout:0 on http.Server; corrected ping/pong and ReadLimit tests). 02-08 added 4 missing Phase 2 Prometheus collectors (LeaseAcquiredTotal, LeaseReleasedTotal, WSFramesSentTotal, HubViewersActive) with D-18 label constraints. All UAT gaps closed.
+**Current focus:** Phase 03.1 — file-browser-and-app-manager
 
 ## Current Position
 
+Phase: 03.1 (file-browser-and-app-manager) — EXECUTING
+Plan: 1 of 8
 | Field | Value |
 |-------|-------|
 | Phase | 2 — Multi-Client Control (complete); 3 — Multi-Device Fleet (complete); 4 — Horizontal Scaling (not started) |
@@ -52,6 +54,10 @@ progress:
 | Decisions logged | 8 (in PROJECT.md Key Decisions, all `— Pending`) |
 
 ## Accumulated Context
+
+### Roadmap Evolution
+
+- Phase 03.1 inserted after Phase 3 (URGENT): File Browser and App Manager — file ops (create folder, upload files/folder, download, rename, delete, details) and app ops (list, select, backup, export, uninstall, details).
 
 ### Active Decisions Carried Into Planning
 
@@ -148,7 +154,7 @@ progress:
 
 ## Session Continuity
 
-**Last action:** Plan 02-08 executed (Phase 2 gap closure) — Added four missing Phase 2 Prometheus collectors: LeaseAcquiredTotal (plain counter), LeaseReleasedTotal (counter with reason label), WSFramesSentTotal (counter with stream label), HubViewersActive (gauge with stream label). All with D-18 cardinality compliance (no device_serial labels). Instrumented LeaseManager.Acquire and reapLockedLocked, Hub.Subscribe/Unsubscribe/evict fan-out loop. TestPhase2MetricNames discovers all 11 metric families. Requirements shipped: OBS-01, OBS-02.
+**Last action:** Quick task — Added Monitor tab to `test/phase1-integration.html` with multi-device grid, phone/TV card templates, auto session creation, and live video streaming per device via WebCodecs.
 
 **Previous action:** Plan 03-03 executed — `LogcatBuffer` 10000-line ring with atomic Subscribe-with-snapshot and drop-on-slow eviction; `logcatReaderLoop` runs `logcat -v threadtime` under per-device errgroup with cenkalti/backoff (1s..30s) and Pitfall 1 mitigation (suppresses non-ctx errors so logcat EOF cannot kill video/audio siblings); `StreamLogcat` WS handler accepts StateActive AND StateReconnecting (Pitfall 1 — buffer survives recovery); `CaptureScreenshot` POST endpoint with `screencap -p` -> `png.Decode` -> `nativewebp.Encode` (A3 RESOLVED — v1.2.1 ships only lossless `Encode`; we set `X-WebP-Mode: lossless-fallback` per the D-07 fallback contract); per-API-key token-bucket rate limit via `golang.org/x/time/rate` (Pitfall 4); `UploadFile`/`DownloadFile`/`DeleteFile` POST/GET/DELETE with `ValidateDevicePath` BEFORE every ADB call (security invariant TestFilesPathTraversal asserts zero ADB calls for traversal inputs), `http.MaxBytesReader`-capped uploads (500 MiB default), `shellQuote` defence-in-depth on DELETE; router wires `/logcat`, `/screenshot`, `/files {POST,GET,DELETE}`, and the 03-02 handoff `/restart` route. THIRD_PARTY_NOTICES updated with `HugoSmits86/nativewebp` (MIT) and `golang.org/x/time` (BSD-3). All `go test -race` packages green; OPS-05 + OPS-06 + OPS-08 satisfied.
 

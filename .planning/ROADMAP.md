@@ -120,6 +120,28 @@ Plans:
 | 03-03 logcat-screenshot-files | done (2026-05-10) | LogcatBuffer + supervisor wiring, /logcat WS, /screenshot (nativewebp lossless, A3 resolved), /files POST/GET/DELETE with allowlist + 500MB cap, /restart route registration. Requirements shipped: OPS-05, OPS-06, OPS-08. |
 | 03-04 apk-recording | done (2026-05-10) | APK install (POST /apks) with Pitfall-5 cleanup, per-device atomic.Bool concurrency guard, per-key minute-bucket rate limit; MKV recording subscriber via at-wat/ebml-go (D-18 verified — slow disk evicts recorder, healthy viewers unaffected) + REST handlers (POST/GET/DELETE /recordings). Requirements shipped: OPS-07, OPS-09. |
 
+### Phase 03.1: File Browser and App Manager (INSERTED)
+
+**Goal:** Expose per-device file browser (list/create/upload/download/rename/delete/details for files & folders) and app manager (list installed apps, select, backup, export, uninstall, details) over the gateway API, building on the Phase 3 ADB-shell + path-validator + rate-limit foundation.
+
+**Scope:**
+- **File browser** — list directory contents, create folder, upload file, upload folder (recursive), download, rename, delete, file/folder details (size, mtime, perms). Reuses `ValidateDevicePath` allowlist + traversal hardening from 03-03.
+- **App manager** — list installed packages, select package, backup (`bu backup` or `pm path` + `adb pull`), export APK to host, uninstall, package details (version, install/update time, permissions, size).
+
+**Requirements** (covered via D-FB-01..12, D-AM-01..08, D-ERR-01 → REQ-FB-LIST, REQ-FB-STAT, REQ-FB-MKDIR, REQ-FB-RENAME, REQ-FB-UPLOAD-FOLDER, REQ-FB-DOWNLOAD-FOLDER, REQ-FB-DELETE-REC, REQ-FB-PATH-VALIDATE, REQ-AM-LIST, REQ-AM-DETAILS, REQ-AM-PKG-VALIDATE, REQ-AM-BACKUP, REQ-AM-APK-EXPORT, REQ-AM-UNINSTALL)
+**Depends on:** Phase 3 (ADB streaming helpers, path validator, per-key rate limiter, files endpoint family)
+**Plans:** 7/8 plans executed
+
+Plans:
+- [x] 03.1-01-PLAN.md — Wave 0a: error sentinels (incl. RENAME_FAILED per CONTEXT.md 2026-05-17 addendum), WriteInFlight gate, FileShellRunner extension, ls/pm pure parsers, existing fakeFileRunner stub update
+- [x] 03.1-01b-PLAN.md — Wave 0b: 5 RED test scaffolds under //go:build phase031_wave1 with B4 syntax-check gate
+- [x] 03.1-02-PLAN.md — Wave 1: file browser non-streaming (list, stat, mkdir, rename + EXDEV mapping, recursive delete branch)
+- [x] 03.1-03-PLAN.md — Wave 1: recursive folder transfer (upload-folder tar+NDJSON, download-folder tar stream)
+- [x] 03.1-04-PLAN.md — Wave 1: app manager list, details, uninstall (with WriteInFlight + Pitfall-4 error mapping)
+- [x] 03.1-05-PLAN.md — Wave 1: bu backup stream with peek-before-headers contract
+- [x] 03.1-06-PLAN.md — Wave 1: APK export single/tar with no base-only fallback
+- [ ] 03.1-07-PLAN.md — Wave 2: router wiring, FilesDispatcher op-verb dispatch, write-op rate limiter, human-verify smoke test
+
 ### Phase 4: Horizontal Scaling
 
 **Goal**: The gateway runs as N instances behind a load balancer with Redis-backed device-to-instance routing, surviving instance death within one heartbeat interval; recordings have a configurable retention policy and Prometheus dashboards aggregate cleanly across instances.
