@@ -11,13 +11,6 @@ import (
 	"github.com/pelni/adb-gateway/internal/session"
 )
 
-// BackupAppForTest is a stub for plan 05. Returns 501.
-func BackupAppForTest(_ *session.Registry, _ FileShellRunner, _ *config.Config) http.HandlerFunc {
-	return func(w http.ResponseWriter, _ *http.Request) {
-		writeError(w, &DomainError{Code: "NOT_IMPLEMENTED", HTTPStatus: http.StatusNotImplemented, Message: "BackupApp: plan 05"})
-	}
-}
-
 // ExportAPKForTest is a stub for plan 06. Returns 501.
 func ExportAPKForTest(_ *session.Registry, _ FileShellRunner, _ *config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, _ *http.Request) {
