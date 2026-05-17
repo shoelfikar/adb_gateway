@@ -97,6 +97,7 @@ func BackupAppForTest(registry *session.Registry, runner FileShellRunner, cfg *c
 		peek := make([]byte, 4)
 		n, _ := io.ReadFull(stdout, peek)
 		if n != 4 {
+			cancel() // signal device-side process to terminate promptly
 			stderrBytes, _ := io.ReadAll(stderr)
 			slog.Info("backup: short stream", "device", serial, "pkg", pkg, "peek_bytes", n, "stderr", truncate(string(stderrBytes), 256))
 			writeError(w, ErrBackupFailed) // headers NOT yet committed -> JSON envelope works
