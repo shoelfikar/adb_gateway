@@ -32,6 +32,13 @@ type DeviceEntry struct {
 	// hold the device mutex during a long ADB call).
 	InstallInFlight atomic.Bool
 
+	// WriteInFlight is the lock-free admission gate for Phase 03.1 write
+	// ops that must single-flight per device (backup, uninstall,
+	// recursive-delete, upload-folder). Independent of InstallInFlight so
+	// an APK install does not block an in-flight backup. CAS-only access
+	// (Pitfall 9 — never hold DeviceEntry.mu while a long ADB call runs).
+	WriteInFlight atomic.Bool
+
 	// Recordings holds active screen recordings keyed by recording_id.
 	// Phase 3 Plan 03-04 limits one active recording per device (a
 	// concurrent POST returns 503 DEVICE_BUSY); the map shape allows

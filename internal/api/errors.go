@@ -43,6 +43,15 @@ var (
 	ErrInstallFailed   = &DomainError{Code: "INSTALL_FAILED", HTTPStatus: http.StatusInternalServerError, Message: "Package installation failed on the device"}
 	ErrDeviceBusy      = &DomainError{Code: "DEVICE_BUSY", HTTPStatus: http.StatusServiceUnavailable, Message: "Device is busy with another operation"}
 	ErrRecordingFailed = &DomainError{Code: "RECORDING_FAILED", HTTPStatus: http.StatusInternalServerError, Message: "Screen recording failed"}
+
+	// Phase 03.1 sentinels (D-ERR-01)
+	ErrRenameCrossFS   = &DomainError{Code: "RENAME_CROSS_FS", HTTPStatus: http.StatusConflict, Message: "Rename across filesystems is not supported; caller must copy"}
+	ErrRenameFailed    = &DomainError{Code: "RENAME_FAILED", HTTPStatus: http.StatusInternalServerError, Message: "Rename failed"}
+	ErrInvalidPackage  = &DomainError{Code: "INVALID_PACKAGE", HTTPStatus: http.StatusBadRequest, Message: "Package name fails Android package-name validation"}
+	ErrPackageNotFound = &DomainError{Code: "PACKAGE_NOT_FOUND", HTTPStatus: http.StatusNotFound, Message: "Package is not installed on this device"}
+	ErrUninstallFailed = &DomainError{Code: "UNINSTALL_FAILED", HTTPStatus: http.StatusInternalServerError, Message: "Package uninstall failed on the device"}
+	ErrBackupFailed    = &DomainError{Code: "BACKUP_FAILED", HTTPStatus: http.StatusInternalServerError, Message: "Backup produced no data (most likely user cancelled the on-device prompt)"}
+	ErrListFailed      = &DomainError{Code: "LIST_FAILED", HTTPStatus: http.StatusInternalServerError, Message: "Listing operation returned non-zero or unparseable output"}
 )
 
 // errorResponse is the JSON envelope for error responses per D-07.
