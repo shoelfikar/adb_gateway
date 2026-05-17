@@ -24,15 +24,16 @@ import (
 // the file handlers. It records all push/pull/delete calls so the tests can
 // assert path-traversal inputs never reach ADB (the security invariant).
 type fakeFileRunner struct {
-	mu        sync.Mutex
-	pushCalls int
-	pullCalls int
-	rmCalls   int
-	pushed    map[string][]byte // dest -> body
-	stored    map[string][]byte // dest -> body for pull lookup
-	pushErr   error
-	pullErr   error
-	rmErr     error
+	mu           sync.Mutex
+	pushCalls    int
+	pullCalls    int
+	rmCalls      int
+	pushed       map[string][]byte // dest -> body
+	stored       map[string][]byte // dest -> body for pull lookup
+	pushErr      error
+	pullErr      error
+	rmErr        error
+	shellV2Calls []string
 }
 
 func newFakeFileRunner() *fakeFileRunner {
@@ -83,6 +84,19 @@ func (f *fakeFileRunner) ShellRunRaw(_ context.Context, _, cmd string) ([]byte, 
 		}
 	}
 	return nil, nil
+}
+
+// ShellV2Stream — added 2026-05-17 to satisfy extended FileShellRunner.
+// Wave 0 Phase 3 tests do not exercise this method; Wave 1 plan 01b's
+// fakes will introduce richer instrumented fakes per handler test file.
+func (f *fakeFileRunner) ShellV2Stream(_ context.Context, _, cmd string) (stdout, stderr io.ReadCloser, exit <-chan int, err error) {
+	f.mu.Lock()
+	f.shellV2Calls = append(f.shellV2Calls, cmd)
+	f.mu.Unlock()
+	ch := make(chan int, 1)
+	ch <- 0
+	close(ch)
+	return io.NopCloser(strings.NewReader("")), io.NopCloser(strings.NewReader("")), ch, nil
 }
 
 func (f *fakeFileRunner) totalCalls() int {

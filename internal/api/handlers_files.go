@@ -41,6 +41,7 @@ type FileShellRunner interface {
 	SyncPushReader(ctx context.Context, serial, dest string, src io.Reader, mode os.FileMode) error
 	SyncPullWriter(ctx context.Context, serial, src string, dst io.Writer) error
 	ShellRunRaw(ctx context.Context, serial, cmd string) ([]byte, error)
+	ShellV2Stream(ctx context.Context, serial, cmd string) (stdout, stderr io.ReadCloser, exit <-chan int, err error)
 }
 
 // UploadFile is the production wiring for POST /files.
