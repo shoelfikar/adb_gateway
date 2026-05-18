@@ -228,9 +228,15 @@ func DownloadFolderForTest(registry *session.Registry, runner FileShellRunner, c
 			return
 		}
 
+		// Bounded ctx independent of r.Context() (D-08 pattern).
+		// Recursive ls + pull operations may be long-running; client
+		// disconnect should not abort them mid-transfer.
+		dlCtx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+		defer cancel()
+
 		// Walk the directory recursively.
 		walkCmd := "ls -lA -R --time-style=full-iso " + shellQuote(root)
-		out, err := runner.ShellRunRaw(r.Context(), serial, walkCmd)
+		out, err := runner.ShellRunRaw(dlCtx, serial, walkCmd)
 		if err != nil {
 			slog.Warn("files: ls -R failed", "device", serial, "path", root, "error", err)
 			writeError(w, ErrListFailed)
@@ -300,7 +306,7 @@ func DownloadFolderForTest(registry *session.Registry, runner FileShellRunner, c
 				}); err != nil {
 					return // tar stream potentially malformed; client sees short read
 				}
-				if err := runner.SyncPullWriter(r.Context(), serial, e.Path, tw); err != nil {
+				if err := runner.SyncPullWriter(dlCtx, serial, e.Path, tw); err != nil {
 					slog.Warn("download-folder: pull failed", "device", serial, "path", e.Path, "error", err)
 					return // partial transfer surfaces as short read at entry boundary
 				}
