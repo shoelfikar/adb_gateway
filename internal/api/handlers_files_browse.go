@@ -21,6 +21,7 @@
 package api
 
 import (
+	"context"
 	"io"
 	"log/slog"
 	"net/http"
@@ -210,8 +211,12 @@ func RenameFileForTest(registry *session.Registry, runner FileShellRunner, cfg *
 
 		cmd := "mv " + shellQuote(srcCleaned) + " " + shellQuote(dstCleaned)
 
+		// Use bounded context independent of r.Context() (D-08 pattern).
+		renameCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
 		// Use ShellV2Stream to capture stderr separately for EXDEV detection.
-		stdout, stderr, exitCh, err := runner.ShellV2Stream(r.Context(), serial, cmd)
+		stdout, stderr, exitCh, err := runner.ShellV2Stream(renameCtx, serial, cmd)
 		if err != nil {
 			slog.Warn("files: mv shell-v2 stream open failed", "device", serial, "error", err)
 			writeError(w, ErrADBUnavailable)
