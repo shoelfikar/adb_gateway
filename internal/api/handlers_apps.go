@@ -259,8 +259,14 @@ func UninstallAppForTest(registry *session.Registry, runner FileShellRunner, cfg
 			writeError(w, ErrUninstallFailed)
 			return
 		}
-		stdoutBytes, _ := io.ReadAll(stdout)
-		stderrBytes, _ := io.ReadAll(stderr)
+		stdoutBytes, stdoutErr := io.ReadAll(stdout)
+		if stdoutErr != nil {
+			slog.Warn("apps: stdout read incomplete", "device", serial, "error", stdoutErr)
+		}
+		stderrBytes, stderrErr := io.ReadAll(stderr)
+		if stderrErr != nil {
+			slog.Warn("apps: stderr read incomplete", "device", serial, "error", stderrErr)
+		}
 		stdout.Close()
 		stderr.Close()
 		var exit int

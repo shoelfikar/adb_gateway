@@ -157,8 +157,14 @@ func InstallAPKForTest(registry *session.Registry, runner APKShellRunner, cfg *c
 			writeError(w, ErrInstallFailed)
 			return
 		}
-		stdoutBytes, _ := io.ReadAll(stdout)
-		stderrBytes, _ := io.ReadAll(stderr)
+		stdoutBytes, stdoutErr := io.ReadAll(stdout)
+		if stdoutErr != nil {
+			slog.Warn("apk: stdout read incomplete", "device", serial, "error", stdoutErr)
+		}
+		stderrBytes, stderrErr := io.ReadAll(stderr)
+		if stderrErr != nil {
+			slog.Warn("apk: stderr read incomplete", "device", serial, "error", stderrErr)
+		}
 		stdout.Close()
 		stderr.Close()
 		var exit int
