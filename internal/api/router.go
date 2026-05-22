@@ -39,6 +39,14 @@ func NewRouter(cfg *config.Config, registry *session.Registry, adbClient *adb.Cl
 		// Device and session routes
 		r.Route("/devices", func(r chi.Router) {
 			r.Get("/", ListDevices(registry))
+
+			// TCP/IP device connect — opt-in to the project's
+			// "Local ADB only" constraint (PROJECT.md). The static
+			// /connect path is registered before the /{serial} group so
+			// chi resolves it as a literal route, not a wildcard match.
+			r.Post("/connect", ConnectDevice(hostServices))
+			r.Delete("/connect/{serial}", DisconnectDevice(hostServices))
+
 			r.Route("/{serial}", func(r chi.Router) {
 				r.Post("/sessions", CreateSession(registry, adbClient, hostServices, cfg))
 				r.Delete("/sessions/{sessionID}", DeleteSession(registry))
@@ -92,7 +100,8 @@ func NewRouter(cfg *config.Config, registry *session.Registry, adbClient *adb.Cl
 						// Read: details + apk export — no rate limit (REQ-AM-DETAILS, REQ-AM-APK-EXPORT)
 						r.Get("/", GetAppDetails(registry, hostServices, cfg))
 						r.Get("/apk", ExportAPK(registry, hostServices, cfg))
-						// Write: backup + uninstall — rate-limited (REQ-AM-BACKUP, REQ-AM-UNINSTALL)
+						// Write: launch + backup + uninstall — rate-limited (REQ-AM-09, REQ-AM-BACKUP, REQ-AM-UNINSTALL)
+						r.With(requireWriteRateLimit(fileappWriteLimiter)).Post("/launch", LaunchApp(registry, hostServices, cfg))
 						r.With(requireWriteRateLimit(fileappWriteLimiter)).Post("/backup", BackupApp(registry, hostServices, cfg))
 						r.With(requireWriteRateLimit(fileappWriteLimiter)).Delete("/", UninstallApp(registry, hostServices, cfg))
 					})
@@ -105,6 +114,10 @@ func NewRouter(cfg *config.Config, registry *session.Registry, adbClient *adb.Cl
 					return scrcpy.NewLauncher(adbClient, hostServices)
 				})
 				r.Post("/restart", RestartSession(registry, cfg, factory))
+
+				// Device power management — reboot and shutdown.
+				r.With(requireWriteRateLimit(fileappWriteLimiter)).Post("/reboot", RebootDevice(registry, hostServices, cfg))
+				r.With(requireWriteRateLimit(fileappWriteLimiter)).Post("/shutdown", ShutdownDevice(registry, hostServices, cfg))
 			})
 		})
 	})

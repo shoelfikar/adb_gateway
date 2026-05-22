@@ -45,13 +45,24 @@ var (
 	ErrRecordingFailed = &DomainError{Code: "RECORDING_FAILED", HTTPStatus: http.StatusInternalServerError, Message: "Screen recording failed"}
 
 	// Phase 03.1 sentinels (D-ERR-01)
-	ErrRenameCrossFS   = &DomainError{Code: "RENAME_CROSS_FS", HTTPStatus: http.StatusConflict, Message: "Rename across filesystems is not supported; caller must copy"}
+	ErrRenameCrossFS    = &DomainError{Code: "RENAME_CROSS_FS", HTTPStatus: http.StatusConflict, Message: "Rename across filesystems is not supported; caller must copy"}
 	ErrRenameFailed    = &DomainError{Code: "RENAME_FAILED", HTTPStatus: http.StatusInternalServerError, Message: "Rename failed"}
 	ErrInvalidPackage  = &DomainError{Code: "INVALID_PACKAGE", HTTPStatus: http.StatusBadRequest, Message: "Package name fails Android package-name validation"}
 	ErrPackageNotFound = &DomainError{Code: "PACKAGE_NOT_FOUND", HTTPStatus: http.StatusNotFound, Message: "Package is not installed on this device"}
 	ErrUninstallFailed = &DomainError{Code: "UNINSTALL_FAILED", HTTPStatus: http.StatusInternalServerError, Message: "Package uninstall failed on the device"}
 	ErrBackupFailed    = &DomainError{Code: "BACKUP_FAILED", HTTPStatus: http.StatusInternalServerError, Message: "Backup produced no data (most likely user cancelled the on-device prompt)"}
 	ErrListFailed      = &DomainError{Code: "LIST_FAILED", HTTPStatus: http.StatusInternalServerError, Message: "Listing operation returned non-zero or unparseable output"}
+	ErrLaunchFailed    = &DomainError{Code: "LAUNCH_FAILED", HTTPStatus: http.StatusInternalServerError, Message: "Failed to launch app on device"}
+	ErrBaseDirDelete    = &DomainError{Code: "BASE_DIR_DELETE_NOT_ALLOWED", HTTPStatus: http.StatusForbidden, Message: "Recursive delete of an allowed base directory is not permitted"}
+
+	// Device power management
+	ErrRebootFailed   = &DomainError{Code: "REBOOT_FAILED", HTTPStatus: http.StatusBadGateway, Message: "Failed to reboot device"}
+	ErrShutdownFailed  = &DomainError{Code: "SHUTDOWN_FAILED", HTTPStatus: http.StatusBadGateway, Message: "Failed to shut down device"}
+
+	// TCP/IP device connect (opt-in to the "no remote ADB" project constraint).
+	ErrInvalidConnectTarget = &DomainError{Code: "INVALID_CONNECT_TARGET", HTTPStatus: http.StatusBadRequest, Message: "host must be non-empty and port must be 1..65535"}
+	ErrAdbConnectFailed     = &DomainError{Code: "ADB_CONNECT_FAILED", HTTPStatus: http.StatusBadGateway, Message: "ADB failed to connect to the requested device"}
+	ErrAdbDisconnectFailed  = &DomainError{Code: "ADB_DISCONNECT_FAILED", HTTPStatus: http.StatusBadGateway, Message: "ADB failed to disconnect the requested device"}
 )
 
 // errorResponse is the JSON envelope for error responses per D-07.

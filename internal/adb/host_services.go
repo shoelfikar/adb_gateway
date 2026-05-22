@@ -267,6 +267,54 @@ func (h *HostServices) ReinitializeGoadb() error {
 	return nil
 }
 
+// Connect issues a `host:connect:<host>:<port>` request to the local ADB
+// server, asking it to open a TCP/IP connection to a network-attached
+// Android device. Returns the human-readable status string reported by ADB
+// (e.g. `connected to 192.168.1.10:5555`). The returned text is also the
+// signal used to disambiguate "already connected" from "failed to connect"
+// — ADB returns OKAY at the wire level for both cases.
+func (h *HostServices) Connect(ctx context.Context, host string, port int) (string, error) {
+	dialCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	conn, err := h.client.dial(dialCtx)
+	if err != nil {
+		return "", fmt.Errorf("connect: %w", err)
+	}
+	defer conn.Close()
+
+	cmd := fmt.Sprintf("host:connect:%s:%d", host, port)
+	if err := sendMessage(conn, cmd); err != nil {
+		return "", fmt.Errorf("send %s: %w", cmd, err)
+	}
+	if _, err := readResponse(conn); err != nil {
+		return "", fmt.Errorf("%s response: %w", cmd, err)
+	}
+	return readStringResponse(conn)
+}
+
+// Disconnect issues a `host:disconnect:<host>:<port>` request to the local
+// ADB server. An empty addr disconnects all TCP/IP-attached devices.
+func (h *HostServices) Disconnect(ctx context.Context, addr string) (string, error) {
+	dialCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	conn, err := h.client.dial(dialCtx)
+	if err != nil {
+		return "", fmt.Errorf("disconnect: %w", err)
+	}
+	defer conn.Close()
+
+	cmd := "host:disconnect:" + addr
+	if err := sendMessage(conn, cmd); err != nil {
+		return "", fmt.Errorf("send %s: %w", cmd, err)
+	}
+	if _, err := readResponse(conn); err != nil {
+		return "", fmt.Errorf("%s response: %w", cmd, err)
+	}
+	return readStringResponse(conn)
+}
+
 // RunDaemonCommand launches a long-running shell command on the device (like app_process)
 // and returns immediately. The ADB shell connection is kept open for the lifetime of
 // the daemon — closing it sends SIGHUP to the process on the device, which terminates it.

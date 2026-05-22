@@ -2,9 +2,11 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
 	"net/http"
 	"regexp"
+	"strconv"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -22,8 +24,9 @@ var serialPattern = regexp.MustCompile(`^[a-zA-Z0-9:._-]+$`)
 
 // deviceResponse represents a device in the API response.
 type deviceResponse struct {
-	Serial string `json:"serial"`
-	State  string `json:"state"`
+	Serial    string  `json:"serial"`
+	State     string  `json:"state"`
+	SessionID *string `json:"session_id,omitempty"`
 }
 
 // sessionResponse represents a session in the API response.
@@ -31,6 +34,141 @@ type sessionResponse struct {
 	ID     string `json:"id"`
 	Serial string `json:"serial"`
 	State  string `json:"state"`
+}
+
+// sessionResponseWithConfig extends sessionResponse with the effective scrcpy
+// config used for this session, so callers can verify their overrides took effect.
+type sessionResponseWithConfig struct {
+	sessionResponse
+	Scrcpy config.ScrcpyConfig `json:"scrcpy"`
+}
+
+// createSessionRequest holds optional per-request scrcpy tunables.
+// Zero values mean "use config default". This allows callers (e.g. a
+// monitoring dashboard) to request lower quality without changing global config.
+type createSessionRequest struct {
+	MaxFPS      *int    `json:"max_fps,omitempty"`       // 0 = unlimited (server default)
+	BitRate     *int    `json:"bit_rate,omitempty"`       // bps, 0 = server default
+	MaxSize     *int    `json:"max_size,omitempty"`       // px, 0 = device default
+	Codec       *string `json:"codec,omitempty"`          // h264 | h265 | av1
+	AudioCodec  *string `json:"audio_codec,omitempty"`    // opus | aac | raw | flac
+	AudioSource *string `json:"audio_source,omitempty"`   // output | mic | playback
+}
+
+// mergeWithConfig builds a session.ScrcpyConfig from per-request overrides
+// falling back to cfg defaults for any field the caller omitted.
+func (r *createSessionRequest) mergeWithConfig(cfg config.ScrcpyConfig) config.ScrcpyConfig {
+	result := cfg
+	if r.MaxFPS != nil {
+		result.MaxFPS = *r.MaxFPS
+	}
+	if r.BitRate != nil {
+		result.BitRate = *r.BitRate
+	}
+	if r.MaxSize != nil {
+		result.MaxSize = *r.MaxSize
+	}
+	if r.Codec != nil {
+		result.Codec = *r.Codec
+	}
+	if r.AudioCodec != nil {
+		result.AudioCodec = *r.AudioCodec
+	}
+	if r.AudioSource != nil {
+		result.AudioSource = *r.AudioSource
+	}
+	return result
+}
+
+// connectRequest is the body for POST /devices/connect.
+type connectRequest struct {
+	Host string `json:"host"`
+	Port int    `json:"port"`
+}
+
+// connectResponse is returned by POST /devices/connect. Status holds the raw
+// human-readable ADB reply (e.g. "connected to 192.168.1.10:5555") so callers
+// can distinguish "already connected" from "newly connected".
+type connectResponse struct {
+	Serial string `json:"serial"`
+	Status string `json:"status"`
+}
+
+// connectHostPattern accepts hostnames, IPv4, and bracketed/unbracketed IPv6 —
+// but rejects whitespace, colons inside the host part, and any character that
+// could break the ADB wire format (`host:connect:<host>:<port>` is colon-
+// delimited).
+var connectHostPattern = regexp.MustCompile(`^[a-zA-Z0-9._\-\[\]]+$`)
+
+// ConnectDevice returns an HTTP handler that asks the local ADB server to
+// open a TCP/IP connection to a network-attached Android device via
+// `host:connect:<host>:<port>`. NOTE: PROJECT.md / CLAUDE.md declares
+// "Local ADB server only (no remote ADB) — devices are USB-attached". This
+// endpoint is opt-in to that constraint and was added by user request.
+func ConnectDevice(hostServices *adb.HostServices) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req connectRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, ErrInvalidConnectTarget)
+			return
+		}
+		if req.Host == "" || req.Port <= 0 || req.Port > 65535 {
+			writeError(w, ErrInvalidConnectTarget)
+			return
+		}
+		if !connectHostPattern.MatchString(req.Host) {
+			writeError(w, ErrInvalidConnectTarget)
+			return
+		}
+
+		ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+		defer cancel()
+
+		status, err := hostServices.Connect(ctx, req.Host, req.Port)
+		if err != nil {
+			slog.Error("adb connect failed", "host", req.Host, "port", req.Port, "error", err)
+			writeError(w, ErrAdbConnectFailed)
+			return
+		}
+
+		// ADB returns OKAY at the wire layer even for "failed to connect to
+		// host:port: ..." results — sniff the status text to map the outcome.
+		if len(status) >= 6 && status[:6] == "failed" {
+			slog.Warn("adb connect rejected by daemon", "host", req.Host, "port", req.Port, "status", status)
+			writeError(w, ErrAdbConnectFailed)
+			return
+		}
+
+		serial := req.Host + ":" + strconv.Itoa(req.Port)
+		slog.Info("adb connect", "serial", serial, "status", status)
+		writeJSON(w, http.StatusOK, connectResponse{Serial: serial, Status: status})
+	}
+}
+
+// DisconnectDevice returns an HTTP handler that issues
+// `host:disconnect:<host>:<port>` against the local ADB server. The serial
+// path parameter must be a TCP/IP-style `host:port` value previously
+// returned by ConnectDevice.
+func DisconnectDevice(hostServices *adb.HostServices) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		serial := chi.URLParam(r, "serial")
+		if serial == "" || !serialPattern.MatchString(serial) {
+			writeError(w, ErrDeviceNotFound)
+			return
+		}
+
+		ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+		defer cancel()
+
+		status, err := hostServices.Disconnect(ctx, serial)
+		if err != nil {
+			slog.Error("adb disconnect failed", "serial", serial, "error", err)
+			writeError(w, ErrAdbDisconnectFailed)
+			return
+		}
+		slog.Info("adb disconnect", "serial", serial, "status", status)
+		writeJSON(w, http.StatusOK, connectResponse{Serial: serial, Status: status})
+	}
 }
 
 // ListDevices returns an HTTP handler that lists all tracked devices with their
@@ -41,16 +179,19 @@ func ListDevices(registry *session.Registry) http.HandlerFunc {
 		devices := make([]deviceResponse, 0, len(entries))
 
 		for _, entry := range entries {
-			// Skip failed devices -- they're not reachable and should
-			// not appear in the device list. Clients can retry by
-			// creating a new session once the device recovers.
-			if entry.GetState() == session.StateFailed {
-				continue
-			}
-			devices = append(devices, deviceResponse{
+			// Include all devices including Failed — the frontend needs
+			// to show failed devices so operators can trigger restart.
+			// Previously failed devices were hidden, making the restart
+			// button unreachable (catch-22).
+			d := deviceResponse{
 				Serial: entry.Serial,
 				State:  entry.GetState().String(),
-			})
+			}
+			if sess := entry.GetSession(); sess != nil {
+				id := sess.ID
+				d.SessionID = &id
+			}
+			devices = append(devices, d)
 		}
 
 		writeJSON(w, http.StatusOK, devices)
@@ -77,6 +218,18 @@ func CreateSession(registry *session.Registry, adbClient *adb.Client, hostServic
 			writeError(w, ErrDeviceNotFound)
 			return
 		}
+
+		// Parse optional per-request scrcpy overrides. Empty body is fine —
+		// all fields are optional and fall back to config defaults.
+		var req createSessionRequest
+		if r.Body != nil && r.ContentLength != 0 {
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				// Permissive: ignore decode errors so callers that send no body
+				// or wrong Content-Type still work. Zero values → config defaults.
+				req = createSessionRequest{}
+			}
+		}
+		scrpyCfg := req.mergeWithConfig(cfg.Scrcpy)
 
 		entry := registry.GetOrCreate(serial)
 		entry.Lock()
@@ -121,6 +274,12 @@ func CreateSession(registry *session.Registry, adbClient *adb.Client, hostServic
 		BufFrames:      cfg.Stream.ViewerBufferFrames,
 		MaxConsecDrops: cfg.Stream.MaxConsecutiveDrops,
 		AudioEnabled:   cfg.Stream.AudioEnabled,
+		ScrcpyCodec:       scrpyCfg.Codec,
+		ScrcpyMaxSize:     scrpyCfg.MaxSize,
+		ScrcpyBitRate:     scrpyCfg.BitRate,
+		ScrcpyMaxFPS:      scrpyCfg.MaxFPS,
+		ScrcpyAudioCodec:  scrpyCfg.AudioCodec,
+		ScrcpyAudioSource: scrpyCfg.AudioSource,
 	})
 
 		if err := sess.Start(launchCtx); err != nil {
@@ -157,10 +316,48 @@ func CreateSession(registry *session.Registry, adbClient *adb.Client, hostServic
 		entry.State = session.StateActive
 		entry.Unlock()
 
-		writeJSON(w, http.StatusCreated, sessionResponse{
-			ID:     sess.ID,
-			Serial: serial,
-			State:  session.StateActive.String(),
+		// Start the Run() goroutines (video/audio hubs, readers, control writer)
+		// in the background. Run() creates the hubs and relay loops that WS
+		// handlers depend on. It runs until the session is closed (which calls
+		// runCancel) or a fatal error occurs.
+		runCtx, runCancel := context.WithCancel(context.Background())
+		sess.SetRunCancel(runCancel)
+		go func() {
+			if err := sess.Run(runCtx); err != nil && runCtx.Err() == nil {
+				slog.Error("session run failed", "device", serial, "session", sess.ID, "error", err)
+				entry.Lock()
+				if entry.State == session.StateActive {
+					entry.State = session.StateFailed
+				}
+				entry.Unlock()
+			}
+		}()
+
+		// Wait for Run() to instantiate hubs + controlWriter before returning 201.
+		// Without this, a client that opens /control immediately after the response
+		// can race the goroutine and observe a nil ControlWriter, causing the WS
+		// handler to short-circuit with ErrDeviceOffline.
+		select {
+		case <-sess.Ready():
+		case <-time.After(2 * time.Second):
+			slog.Error("session run did not become ready in time", "device", serial, "session", sess.ID)
+			runCancel()
+			sess.Close(context.Background())
+			entry.Lock()
+			entry.State = session.StateFailed
+			entry.Session = nil
+			entry.Unlock()
+			writeError(w, ErrScrcpyLaunchFailed)
+			return
+		}
+
+		writeJSON(w, http.StatusCreated, sessionResponseWithConfig{
+			sessionResponse: sessionResponse{
+				ID:     sess.ID,
+				Serial: serial,
+				State:  session.StateActive.String(),
+			},
+			Scrcpy: scrpyCfg,
 		})
 	}
 }
@@ -199,6 +396,15 @@ func RestartSession(registry *session.Registry, cfg *config.Config, factory Laun
 			return
 		}
 
+		// Parse optional per-request scrcpy overrides (same as CreateSession).
+		var req createSessionRequest
+		if r.Body != nil && r.ContentLength != 0 {
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				req = createSessionRequest{}
+			}
+		}
+		scrpyCfg := req.mergeWithConfig(cfg.Scrcpy)
+
 		entry, ok := registry.Get(serial)
 		if !ok {
 			writeError(w, ErrDeviceNotFound)
@@ -227,6 +433,12 @@ func RestartSession(registry *session.Registry, cfg *config.Config, factory Laun
 			BufFrames:      cfg.Stream.ViewerBufferFrames,
 			MaxConsecDrops: cfg.Stream.MaxConsecutiveDrops,
 			AudioEnabled:   cfg.Stream.AudioEnabled,
+			ScrcpyCodec:       scrpyCfg.Codec,
+			ScrcpyMaxSize:     scrpyCfg.MaxSize,
+			ScrcpyBitRate:     scrpyCfg.BitRate,
+			ScrcpyMaxFPS:      scrpyCfg.MaxFPS,
+			ScrcpyAudioCodec:  scrpyCfg.AudioCodec,
+			ScrcpyAudioSource: scrpyCfg.AudioSource,
 		})
 
 		if err := sess.Start(launchCtx); err != nil {
@@ -262,10 +474,135 @@ func RestartSession(registry *session.Registry, cfg *config.Config, factory Laun
 		entry.State = session.StateActive
 		entry.Unlock()
 
-		writeJSON(w, http.StatusCreated, sessionResponse{
-			ID:     sess.ID,
-			Serial: serial,
-			State:  session.StateActive.String(),
+		writeJSON(w, http.StatusCreated, sessionResponseWithConfig{
+			sessionResponse: sessionResponse{
+				ID:     sess.ID,
+				Serial: serial,
+				State:  session.StateActive.String(),
+			},
+			Scrcpy: scrpyCfg,
+		})
+	}
+}
+
+// deviceShellFn is the minimal callback for sending a shell command to a device.
+// Production wiring binds this to hostServices.RunShellCommand via a closure.
+type deviceShellFn func(ctx context.Context, cmd string) (string, error)
+
+// RebootDevice returns an HTTP handler that reboots the Android device.
+// It closes any active scrcpy session before sending the reboot command.
+// The device will disconnect and reconnect via WatchDevices naturally.
+func RebootDevice(registry *session.Registry, hostServices *adb.HostServices, cfg *config.Config) http.HandlerFunc {
+	shellFn := func(ctx context.Context, cmd string) (string, error) {
+		return hostServices.RunShellCommand(ctx, "target-device", cmd)
+	}
+	return rebootDeviceImpl(registry, shellFn)
+}
+
+// RebootDeviceForTest builds the reboot handler with an injectable shell function.
+func RebootDeviceForTest(registry *session.Registry, shellFn deviceShellFn) http.HandlerFunc {
+	return rebootDeviceImpl(registry, shellFn)
+}
+
+func rebootDeviceImpl(registry *session.Registry, shellFn deviceShellFn) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		serial := chi.URLParam(r, "serial")
+		if serial == "" || !serialPattern.MatchString(serial) {
+			writeError(w, ErrDeviceNotFound)
+			return
+		}
+
+		entry, ok := registry.Get(serial)
+		if !ok {
+			writeError(w, ErrDeviceNotFound)
+			return
+		}
+
+		// Close any active session before rebooting. The device will
+		// disconnect from ADB shortly after this command completes.
+		entry.Lock()
+		sess := entry.Session
+		entry.Session = nil
+		entry.State = session.StateIdle
+		entry.Unlock()
+
+		if sess != nil {
+			if err := sess.Close(r.Context()); err != nil {
+				slog.Error("error closing session before reboot", "device", serial, "error", err)
+			}
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+
+		if _, err := shellFn(ctx, "reboot"); err != nil {
+			slog.Error("reboot command failed", "device", serial, "error", err)
+			writeError(w, ErrRebootFailed)
+			return
+		}
+
+		slog.Info("device reboot initiated", "device", serial)
+		writeJSON(w, http.StatusAccepted, map[string]string{
+			"serial":  serial,
+			"message": "Device reboot initiated",
+		})
+	}
+}
+
+// ShutdownDevice returns an HTTP handler that powers off the Android device.
+// It closes any active scrcpy session before sending the shutdown command.
+func ShutdownDevice(registry *session.Registry, hostServices *adb.HostServices, cfg *config.Config) http.HandlerFunc {
+	shellFn := func(ctx context.Context, cmd string) (string, error) {
+		return hostServices.RunShellCommand(ctx, "target-device", cmd)
+	}
+	return shutdownDeviceImpl(registry, shellFn)
+}
+
+// ShutdownDeviceForTest builds the shutdown handler with an injectable shell function.
+func ShutdownDeviceForTest(registry *session.Registry, shellFn deviceShellFn) http.HandlerFunc {
+	return shutdownDeviceImpl(registry, shellFn)
+}
+
+func shutdownDeviceImpl(registry *session.Registry, shellFn deviceShellFn) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		serial := chi.URLParam(r, "serial")
+		if serial == "" || !serialPattern.MatchString(serial) {
+			writeError(w, ErrDeviceNotFound)
+			return
+		}
+
+		entry, ok := registry.Get(serial)
+		if !ok {
+			writeError(w, ErrDeviceNotFound)
+			return
+		}
+
+		// Close any active session before shutting down.
+		entry.Lock()
+		sess := entry.Session
+		entry.Session = nil
+		entry.State = session.StateIdle
+		entry.Unlock()
+
+		if sess != nil {
+			if err := sess.Close(r.Context()); err != nil {
+				slog.Error("error closing session before shutdown", "device", serial, "error", err)
+			}
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+
+		if _, err := shellFn(ctx, "reboot -p"); err != nil {
+			slog.Error("shutdown command failed", "device", serial, "error", err)
+			writeError(w, ErrShutdownFailed)
+			return
+		}
+
+		slog.Info("device shutdown initiated", "device", serial)
+		writeJSON(w, http.StatusAccepted, map[string]string{
+			"serial":  serial,
+			"message": "Device shutdown initiated",
 		})
 	}
 }
