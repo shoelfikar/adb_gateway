@@ -23,6 +23,13 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - name: Install adb
+        # The internal/adb package tests construct prife/goadb clients, which
+        # require the `adb` binary on PATH (goadb auto-starts the local
+        # adb-server). Without it, NewHostServices fails with
+        # "could not find adb in PATH".
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends android-tools-adb
+
       - name: Run tests
         run: go test ./...
 
