@@ -79,9 +79,10 @@ changelog:
       order: 999
 
 release:
-  github:
-    owner: sulfikardi
-    name: adb-gateway
+  # owner/name intentionally omitted — goreleaser-action reads
+  # GITHUB_REPOSITORY from the workflow env, so the release always lands on
+  # the repo that triggered the run. Hardcoding here drifts whenever the
+  # repo is renamed or moved.
   draft: false
   prerelease: auto
   name_template: "{{ .ProjectName }} v{{ .Version }}"
