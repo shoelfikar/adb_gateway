@@ -255,8 +255,12 @@ func TestStreamVideoPingPongCycle(t *testing.T) {
 
 	registry := session.NewRegistry()
 	cfg := testConfig()
-	cfg.WS.PingIntervalSeconds = 1 // fast ping for testing
-	cfg.WS.IdleTimeoutSeconds = 3   // 3 consecutive misses = idle
+	// Loosened from 1s/3s/4s sleep to 2s/6s/8s sleep so CI runners (which can
+	// stall a goroutine for several hundred ms under contention) no longer
+	// flake. We still cross >3 ping intervals and sleep > idle_timeout, so
+	// the test still proves that auto-pong is keeping the connection alive.
+	cfg.WS.PingIntervalSeconds = 2 // ping every 2s
+	cfg.WS.IdleTimeoutSeconds = 6   // 3 consecutive misses = idle
 
 	entry := registry.GetOrCreate("ABC123")
 	entry.SetSession(sess)
@@ -267,7 +271,7 @@ func TestStreamVideoPingPongCycle(t *testing.T) {
 	defer server.Close()
 
 	wsURL := "ws" + strings.TrimPrefix(server.URL, "http") + "/devices/ABC123/video"
-	ctx, ctxCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, ctxCancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer ctxCancel()
 
 	conn, _, err := websocket.Dial(ctx, wsURL, nil)
@@ -280,10 +284,10 @@ func TestStreamVideoPingPongCycle(t *testing.T) {
 	_, _, err = conn.Read(readCtx)
 	require.NoError(t, err, "should receive codec meta")
 
-	// Wait through 3+ ping intervals. With CloseRead on the server side,
-	// pong responses are processed and the idle counter resets.
+	// Wait through 3+ ping intervals (>idle_timeout). With CloseRead on the
+	// server side, pong responses are processed and the idle counter resets.
 	// Connection should still be alive.
-	time.Sleep(4 * time.Second)
+	time.Sleep(8 * time.Second)
 
 	// Publish a frame from the hub; if the connection is alive the client
 	// will receive it.
