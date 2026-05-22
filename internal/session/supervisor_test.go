@@ -333,3 +333,71 @@ func TestSessionRunContextCancellation(t *testing.T) {
 	_ = sess.Run(ctx)
 	client.Close()
 }
+// TestSessionStartPassesScrcpyConfig verifies that scrcpy tunable fields
+// from SessionOpts are forwarded to LaunchOptions in Start().
+func TestSessionStartPassesScrcpyConfig(t *testing.T) {
+	result := createMockLaunchResult()
+	srv, client := net.Pipe()
+	defer srv.Close()
+	result.VideoConn = client
+
+	launcher := &capturingLauncher{result: result}
+	opts := SessionOpts{
+		BufFrames:      60,
+		MaxConsecDrops: 120,
+		AudioEnabled:   true,
+		ScrcpyCodec:       "h265",
+		ScrcpyMaxSize:     1920,
+		ScrcpyBitRate:     8000000,
+		ScrcpyMaxFPS:      30,
+		ScrcpyAudioCodec:  "aac",
+		ScrcpyAudioSource: "mic",
+	}
+	sess := NewDeviceSession("TESTDEV", nil, launcher, opts)
+
+	ctx := context.Background()
+	err := sess.Start(ctx)
+	require.NoError(t, err)
+	defer sess.Close(ctx)
+	defer srv.Close()
+
+	// Verify LaunchOptions received the scrcpy tunables.
+	assert.Equal(t, "h265", launcher.captured.Codec)
+	assert.Equal(t, 1920, launcher.captured.MaxSize)
+	assert.Equal(t, 8000000, launcher.captured.BitRate)
+	assert.Equal(t, 30, launcher.captured.MaxFPS)
+	assert.Equal(t, "aac", launcher.captured.AudioCodec)
+	assert.Equal(t, "mic", launcher.captured.AudioSource)
+	assert.True(t, launcher.captured.AudioEnabled)
+	assert.True(t, launcher.captured.ControlEnabled)
+}
+
+// capturingLauncher captures the LaunchOptions for assertion.
+type capturingLauncher struct {
+	result   *scrcpy.LaunchResult
+	err      error
+	captured scrcpy.LaunchOptions
+	mu       sync.Mutex
+}
+
+func (l *capturingLauncher) LaunchWithOptions(ctx context.Context, serial string, opts scrcpy.LaunchOptions) (*scrcpy.LaunchResult, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.captured = opts
+	if l.err != nil {
+		return nil, l.err
+	}
+	return l.result, nil
+}
+
+// TestDefaultSessionOptsScrcpyZeroValues verifies that DefaultSessionOpts
+// produces zero-value scrcpy fields (which mean "use server defaults").
+func TestDefaultSessionOptsScrcpyZeroValues(t *testing.T) {
+	opts := DefaultSessionOpts()
+	assert.Equal(t, "", opts.ScrcpyCodec)
+	assert.Equal(t, 0, opts.ScrcpyMaxSize)
+	assert.Equal(t, 0, opts.ScrcpyBitRate)
+	assert.Equal(t, 0, opts.ScrcpyMaxFPS)
+	assert.Equal(t, "", opts.ScrcpyAudioCodec)
+	assert.Equal(t, "", opts.ScrcpyAudioSource)
+}

@@ -103,6 +103,56 @@ func TestAPIKeyAuthQueryParameter(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 }
 
+func TestAPIKeyAuthSubprotocol(t *testing.T) {
+	r := chi.NewRouter()
+	r.Use(APIKeyAuth("valid-primary-key", "valid-secondary-key"))
+	r.Get("/test", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("ok"))
+	})
+
+	t.Run("valid api.<key> subprotocol", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/test", nil)
+		req.Header.Set("Sec-WebSocket-Protocol", "api.valid-primary-key")
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		assert.Equal(t, http.StatusOK, w.Code)
+	})
+
+	t.Run("valid api.<key> subprotocol with secondary key", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/test", nil)
+		req.Header.Set("Sec-WebSocket-Protocol", "api.valid-secondary-key")
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		assert.Equal(t, http.StatusOK, w.Code)
+	})
+
+	t.Run("invalid api.<key> subprotocol", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/test", nil)
+		req.Header.Set("Sec-WebSocket-Protocol", "api.wrong-key")
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		assert.Equal(t, http.StatusUnauthorized, w.Code)
+	})
+
+	t.Run("lease subprotocol does not authenticate", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/test", nil)
+		req.Header.Set("Sec-WebSocket-Protocol", "lease.some-lease-id")
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		assert.Equal(t, http.StatusUnauthorized, w.Code)
+	})
+
+	t.Run("X-API-Key header takes priority over subprotocol", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/test", nil)
+		req.Header.Set("X-API-Key", "valid-primary-key")
+		req.Header.Set("Sec-WebSocket-Protocol", "api.wrong-key")
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		assert.Equal(t, http.StatusOK, w.Code)
+	})
+}
+
 func TestAPIKeyAuthTimingSafety(t *testing.T) {
 	primary := "valid-primary-key-with-some-length"
 	secondary := "valid-secondary-key-other"

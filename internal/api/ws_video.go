@@ -26,30 +26,41 @@ import (
 func StreamVideo(registry *session.Registry, allowedOrigins []string, cfg *config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		serial := chi.URLParam(r, "serial")
+		slog.Info("ws video handler entered", "serial", serial, "method", r.Method, "path", r.URL.Path, "upgrade", r.Header.Get("Upgrade"))
 		if serial == "" {
+			slog.Error("ws video: serial is empty", "path", r.URL.Path)
 			writeError(w, ErrDeviceNotFound)
 			return
 		}
 
 		if !serialPattern.MatchString(serial) {
+			slog.Error("ws video: serial pattern mismatch", "serial", serial)
 			writeError(w, ErrDeviceNotFound)
 			return
 		}
 
 		entry, ok := registry.Get(serial)
 		if !ok {
+			slog.Error("ws video: device not in registry", "device", serial)
 			writeError(w, ErrDeviceOffline)
 			return
 		}
 
 		sess := entry.GetSession()
-		if sess == nil || sess.State() != session.StateActive {
+		if sess == nil {
+			slog.Error("ws video: session is nil", "device", serial)
+			writeError(w, ErrDeviceOffline)
+			return
+		}
+		if sess.State() != session.StateActive {
+			slog.Error("ws video: session not active", "device", serial, "state", sess.State())
 			writeError(w, ErrDeviceOffline)
 			return
 		}
 
 		hub := sess.VideoHub()
 		if hub == nil {
+			slog.Error("ws video: video hub is nil", "device", serial)
 			writeError(w, ErrDeviceOffline)
 			return
 		}
@@ -71,10 +82,22 @@ func StreamVideo(registry *session.Registry, allowedOrigins []string, cfg *confi
 		viewerID := uuid.NewString()
 		slog.Info("video viewer connected", "device", serial, "viewer_id", viewerID)
 
-		if err := subscribeAndRelay(ctx, ws, hub, "video", viewerID, cfg); err != nil {
-			if ctx.Err() == nil {
-				slog.Info("video relay ended", "device", serial, "viewer_id", viewerID, "error", err)
-			}
+		// Track the final relay error so the deferred close-code logger can
+		// attribute the disconnect. See debug session ws-disconnect-remote-stream.
+		var relayErr error
+		defer func() {
+			closeCode := websocket.CloseStatus(relayErr)
+			slog.Info("video viewer disconnected",
+				"device", serial,
+				"viewer_id", viewerID,
+				"close_code", int(closeCode),
+				"error", relayErr,
+			)
+		}()
+
+		relayErr = subscribeAndRelay(ctx, ws, hub, "video", viewerID, cfg)
+		if relayErr != nil && ctx.Err() == nil {
+			slog.Info("video relay ended", "device", serial, "viewer_id", viewerID, "error", relayErr)
 		}
 	}
 }

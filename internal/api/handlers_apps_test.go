@@ -4,6 +4,7 @@ package api
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -92,6 +93,7 @@ func setupAppsRouter(registry *session.Registry, runner FileShellRunner, cfg *co
 	r.Route("/devices/{serial}/apps", func(r chi.Router) {
 		r.Get("/", ListAppsForTest(registry, runner, cfg))
 		r.Get("/{pkg}", AppDetailsForTest(registry, runner, cfg))
+		r.Post("/{pkg}/launch", LaunchAppForTest(registry, runner, cfg))
 		r.Delete("/{pkg}", UninstallAppForTest(registry, runner, cfg))
 	})
 	return r
@@ -410,4 +412,374 @@ func TestUninstall_Success_SingleFlight(t *testing.T) {
 	close(release)
 	w1 := <-done1
 	assert.Equal(t, http.StatusOK, w1.Code, "first uninstall should succeed")
+}
+
+// ---------------------------------------------------------------------------
+// LaunchApp tests
+// ---------------------------------------------------------------------------
+
+// TestLaunchApp_AmStartSuccess verifies the primary launch path:
+// resolve-activity returns a component, am start succeeds.
+func TestLaunchApp_AmStartSuccess(t *testing.T) {
+	registry := session.NewRegistry()
+	registry.GetOrCreate("ABC123").SetState(session.StateActive)
+
+	runner := newRecordingAppsRunner()
+	runner.shellFn = func(ctx context.Context, cmd string) ([]byte, error) {
+		if strings.Contains(cmd, "resolve-activity") {
+			return []byte("android.intent.action.MAIN\ncom.foo.bar/com.foo.bar.MainActivity\n"), nil
+		}
+		if strings.Contains(cmd, "am start") {
+			return []byte("Starting: Intent { cmp=com.foo.bar/com.foo.bar.MainActivity }\n"), nil
+		}
+		return nil, fmt.Errorf("unexpected command: %s", cmd)
+	}
+
+	cfg := browseTestConfig()
+	r := setupAppsRouter(registry, runner, cfg)
+
+	req := httptest.NewRequest(http.MethodPost,
+		"/devices/ABC123/apps/com.foo.bar/launch", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Contains(t, w.Body.String(), `"launched"`)
+	assert.Contains(t, w.Body.String(), "com.foo.bar")
+}
+
+// TestLaunchApp_AmStartShortComponent verifies resolve-activity returning
+// the short component form (pkg/.Activity) works with am start.
+func TestLaunchApp_AmStartShortComponent(t *testing.T) {
+	registry := session.NewRegistry()
+	registry.GetOrCreate("ABC123").SetState(session.StateActive)
+
+	runner := newRecordingAppsRunner()
+	runner.shellFn = func(ctx context.Context, cmd string) ([]byte, error) {
+		if strings.Contains(cmd, "resolve-activity") {
+			return []byte("android.intent.action.MAIN\ncom.foo.bar/.MainActivity\n"), nil
+		}
+		if strings.Contains(cmd, "am start") {
+			return []byte("Starting: Intent { cmp=com.foo.bar/.MainActivity }\n"), nil
+		}
+		return nil, fmt.Errorf("unexpected command: %s", cmd)
+	}
+
+	cfg := browseTestConfig()
+	r := setupAppsRouter(registry, runner, cfg)
+
+	req := httptest.NewRequest(http.MethodPost,
+		"/devices/ABC123/apps/com.foo.bar/launch", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Contains(t, w.Body.String(), `"launched"`)
+}
+
+// TestLaunchApp_MonkeyFallback verifies that when resolve-activity fails
+// (e.g. older device), the handler falls back to monkey and succeeds.
+func TestLaunchApp_MonkeyFallback(t *testing.T) {
+	registry := session.NewRegistry()
+	registry.GetOrCreate("ABC123").SetState(session.StateActive)
+
+	runner := newRecordingAppsRunner()
+	runner.shellFn = func(ctx context.Context, cmd string) ([]byte, error) {
+		if strings.Contains(cmd, "resolve-activity") {
+			// Older device: cmd package resolve-activity not available.
+			return nil, fmt.Errorf("command not found")
+		}
+		if strings.Contains(cmd, "monkey") {
+			return []byte("Events injected: 1\n"), nil
+		}
+		return nil, fmt.Errorf("unexpected command: %s", cmd)
+	}
+
+	cfg := browseTestConfig()
+	r := setupAppsRouter(registry, runner, cfg)
+
+	req := httptest.NewRequest(http.MethodPost,
+		"/devices/ABC123/apps/com.foo.bar/launch", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Contains(t, w.Body.String(), `"launched"`)
+}
+
+// TestLaunchApp_MonkeyFallbackEmptyResolve verifies fallback to monkey when
+// resolve-activity succeeds but returns no matching component.
+func TestLaunchApp_MonkeyFallbackEmptyResolve(t *testing.T) {
+	registry := session.NewRegistry()
+	registry.GetOrCreate("ABC123").SetState(session.StateActive)
+
+	runner := newRecordingAppsRunner()
+	runner.shellFn = func(ctx context.Context, cmd string) ([]byte, error) {
+		if strings.Contains(cmd, "resolve-activity") {
+			// No launcher activity found (empty/bogus output).
+			return []byte("No activity found\n"), nil
+		}
+		if strings.Contains(cmd, "monkey") {
+			return []byte("Events injected: 1\n"), nil
+		}
+		return nil, fmt.Errorf("unexpected command: %s", cmd)
+	}
+
+	cfg := browseTestConfig()
+	r := setupAppsRouter(registry, runner, cfg)
+
+	req := httptest.NewRequest(http.MethodPost,
+		"/devices/ABC123/apps/com.foo.bar/launch", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Contains(t, w.Body.String(), `"launched"`)
+}
+
+// TestLaunchApp_AmStartPackageNotFound verifies that am start "does not exist"
+// maps to 404 PACKAGE_NOT_FOUND.
+func TestLaunchApp_AmStartPackageNotFound(t *testing.T) {
+	registry := session.NewRegistry()
+	registry.GetOrCreate("ABC123").SetState(session.StateActive)
+
+	runner := newRecordingAppsRunner()
+	runner.shellFn = func(ctx context.Context, cmd string) ([]byte, error) {
+		if strings.Contains(cmd, "resolve-activity") {
+			return []byte("android.intent.action.MAIN\ncom.nonexistent.app/com.nonexistent.app.MainActivity\n"), nil
+		}
+		if strings.Contains(cmd, "am start") {
+			return []byte("Error: Activity does not exist\n"), nil
+		}
+		return nil, fmt.Errorf("unexpected command: %s", cmd)
+	}
+
+	cfg := browseTestConfig()
+	r := setupAppsRouter(registry, runner, cfg)
+
+	req := httptest.NewRequest(http.MethodPost,
+		"/devices/ABC123/apps/com.nonexistent.app/launch", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusNotFound, w.Code)
+	assert.Contains(t, w.Body.String(), "PACKAGE_NOT_FOUND")
+}
+
+// TestLaunchApp_AmStartSecurityException verifies that am start
+// SecurityException output maps to 500 LAUNCH_FAILED.
+func TestLaunchApp_AmStartSecurityException(t *testing.T) {
+	registry := session.NewRegistry()
+	registry.GetOrCreate("ABC123").SetState(session.StateActive)
+
+	runner := newRecordingAppsRunner()
+	runner.shellFn = func(ctx context.Context, cmd string) ([]byte, error) {
+		if strings.Contains(cmd, "resolve-activity") {
+			return []byte("android.intent.action.MAIN\ncom.foo.bar/com.foo.bar.MainActivity\n"), nil
+		}
+		if strings.Contains(cmd, "am start") {
+			return []byte("java.lang.SecurityException: Permission Denial: starting Intent\n"), nil
+		}
+		return nil, fmt.Errorf("unexpected command: %s", cmd)
+	}
+
+	cfg := browseTestConfig()
+	r := setupAppsRouter(registry, runner, cfg)
+
+	req := httptest.NewRequest(http.MethodPost,
+		"/devices/ABC123/apps/com.foo.bar/launch", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	assert.Contains(t, w.Body.String(), "LAUNCH_FAILED")
+}
+
+// TestLaunchApp_MonkeyPackageNotFound verifies that monkey "Error: Unknown package"
+// output maps to 404 PACKAGE_NOT_FOUND (fallback path).
+func TestLaunchApp_MonkeyPackageNotFound(t *testing.T) {
+	registry := session.NewRegistry()
+	registry.GetOrCreate("ABC123").SetState(session.StateActive)
+
+	runner := newRecordingAppsRunner()
+	runner.shellFn = func(ctx context.Context, cmd string) ([]byte, error) {
+		if strings.Contains(cmd, "resolve-activity") {
+			return nil, fmt.Errorf("command not found")
+		}
+		return []byte("// Error: Unknown package: com.nonexistent.app\n"), nil
+	}
+
+	cfg := browseTestConfig()
+	r := setupAppsRouter(registry, runner, cfg)
+
+	req := httptest.NewRequest(http.MethodPost,
+		"/devices/ABC123/apps/com.nonexistent.app/launch", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusNotFound, w.Code)
+	assert.Contains(t, w.Body.String(), "PACKAGE_NOT_FOUND")
+}
+
+// TestLaunchApp_MonkeyNoActivity verifies that monkey "// Error: No activities found"
+// maps to 500 LAUNCH_FAILED (fallback path when both resolves return empty).
+func TestLaunchApp_MonkeyNoActivity(t *testing.T) {
+	registry := session.NewRegistry()
+	registry.GetOrCreate("ABC123").SetState(session.StateActive)
+
+	runner := newRecordingAppsRunner()
+	runner.shellFn = func(ctx context.Context, cmd string) ([]byte, error) {
+		if strings.Contains(cmd, "resolve-activity") {
+			// Both LAUNCHER and LEANBACK_LAUNCHER return empty.
+			return []byte(""), nil
+		}
+		return []byte("// Error: No activities found\n"), nil
+	}
+
+	cfg := browseTestConfig()
+	r := setupAppsRouter(registry, runner, cfg)
+
+	req := httptest.NewRequest(http.MethodPost,
+		"/devices/ABC123/apps/com.foo.bar/launch", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	assert.Contains(t, w.Body.String(), "LAUNCH_FAILED")
+}
+
+// TestLaunchApp_LeanbackLauncher verifies that Android TV apps using
+// LEANBACK_LAUNCHER are found when LAUNCHER returns no activity.
+// This is the exact scenario for id.iptv.pelni.
+func TestLaunchApp_LeanbackLauncher(t *testing.T) {
+	registry := session.NewRegistry()
+	registry.GetOrCreate("ABC123").SetState(session.StateActive)
+
+	runner := newRecordingAppsRunner()
+	runner.shellFn = func(ctx context.Context, cmd string) ([]byte, error) {
+		if strings.Contains(cmd, "resolve-activity") && strings.Contains(cmd, "LEANBACK_LAUNCHER") {
+			return []byte("priority=0 preferredOrder=0 match=0x108000\nid.iptv.pelni/.SplashScreenActivity\n"), nil
+		}
+		if strings.Contains(cmd, "resolve-activity") {
+			// Standard LAUNCHER returns nothing.
+			return []byte("No activity found\n"), nil
+		}
+		if strings.Contains(cmd, "am start") {
+			return []byte("Starting: Intent { cmp=id.iptv.pelni/.SplashScreenActivity }\n"), nil
+		}
+		return nil, fmt.Errorf("unexpected command: %s", cmd)
+	}
+
+	cfg := browseTestConfig()
+	r := setupAppsRouter(registry, runner, cfg)
+
+	req := httptest.NewRequest(http.MethodPost,
+		"/devices/ABC123/apps/id.iptv.pelni/launch", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Contains(t, w.Body.String(), `"launched"`)
+	assert.Contains(t, w.Body.String(), "id.iptv.pelni")
+}
+
+// TestLaunchApp_MonkeyAborted verifies that monkey "No activities found to run,
+// monkey aborted" output (Android TV apps on monkey fallback) maps to 500
+// LAUNCH_FAILED. This is the exact output seen for id.iptv.pelni when
+// both resolve-activity categories and monkey all fail.
+func TestLaunchApp_MonkeyAborted(t *testing.T) {
+	registry := session.NewRegistry()
+	registry.GetOrCreate("ABC123").SetState(session.StateActive)
+
+	runner := newRecordingAppsRunner()
+	runner.shellFn = func(ctx context.Context, cmd string) ([]byte, error) {
+		if strings.Contains(cmd, "resolve-activity") {
+			// Both LAUNCHER and LEANBACK_LAUNCHER resolve return empty.
+			return []byte(""), nil
+		}
+		return []byte("** No activities found to run, monkey aborted.\n"), nil
+	}
+
+	cfg := browseTestConfig()
+	r := setupAppsRouter(registry, runner, cfg)
+
+	req := httptest.NewRequest(http.MethodPost,
+		"/devices/ABC123/apps/id.iptv.pelni/launch", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	assert.Contains(t, w.Body.String(), "LAUNCH_FAILED")
+}
+
+// TestLaunchApp_InvalidPkg verifies that an invalid package name returns 400
+// INVALID_PACKAGE with ZERO shell calls (REQ-AM-PKG-VALIDATE invariant).
+func TestLaunchApp_InvalidPkg(t *testing.T) {
+	registry := session.NewRegistry()
+	registry.GetOrCreate("ABC123").SetState(session.StateActive)
+
+	runner := newRecordingAppsRunner()
+	cfg := browseTestConfig()
+	r := setupAppsRouter(registry, runner, cfg)
+
+	req := httptest.NewRequest(http.MethodPost,
+		"/devices/ABC123/apps/;rm/launch", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Contains(t, w.Body.String(), "INVALID_PACKAGE")
+	assert.Equal(t, 0, runner.Calls(), "ZERO shell calls for invalid package name")
+}
+
+// TestLaunchApp_ShellError verifies that ShellRunRaw errors map to 500 LAUNCH_FAILED.
+func TestLaunchApp_ShellError(t *testing.T) {
+	registry := session.NewRegistry()
+	registry.GetOrCreate("ABC123").SetState(session.StateActive)
+
+	runner := newRecordingAppsRunner()
+	runner.shellFn = func(ctx context.Context, cmd string) ([]byte, error) {
+		return nil, context.DeadlineExceeded
+	}
+
+	cfg := browseTestConfig()
+	r := setupAppsRouter(registry, runner, cfg)
+
+	req := httptest.NewRequest(http.MethodPost,
+		"/devices/ABC123/apps/com.foo.bar/launch", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	assert.Contains(t, w.Body.String(), "LAUNCH_FAILED")
+}
+
+// ---------------------------------------------------------------------------
+// parseResolveActivity tests
+// ---------------------------------------------------------------------------
+
+func TestParseResolveActivity_StandardFormat(t *testing.T) {
+	got := parseResolveActivity("android.intent.action.MAIN\ncom.foo.bar/com.foo.bar.MainActivity\n", "com.foo.bar")
+	assert.Equal(t, "com.foo.bar/com.foo.bar.MainActivity", got)
+}
+
+func TestParseResolveActivity_ShortForm(t *testing.T) {
+	got := parseResolveActivity("android.intent.action.MAIN\ncom.foo.bar/.MainActivity\n", "com.foo.bar")
+	assert.Equal(t, "com.foo.bar/.MainActivity", got)
+}
+
+func TestParseResolveActivity_LeanbackFormat(t *testing.T) {
+	output := "priority=0 preferredOrder=0 match=0x108000 specificIndex=-1 isDefault=false\nid.iptv.pelni/.SplashScreenActivity\n"
+	got := parseResolveActivity(output, "id.iptv.pelni")
+	assert.Equal(t, "id.iptv.pelni/.SplashScreenActivity", got)
+}
+
+func TestParseResolveActivity_NoActivityFound(t *testing.T) {
+	got := parseResolveActivity("No activity found\n", "com.foo.bar")
+	assert.Equal(t, "", got)
+}
+
+func TestParseResolveActivity_EmptyOutput(t *testing.T) {
+	got := parseResolveActivity("", "com.foo.bar")
+	assert.Equal(t, "", got)
 }

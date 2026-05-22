@@ -7,7 +7,8 @@ import (
 )
 
 // TestValidateDevicePath enforces D-11: URL-decode -> path.Clean -> prefix
-// match against an allowlist. Blocks ../, %2e%2e, mixed case, base-dir-itself.
+// match against an allowlist. Blocks ../, %2e%2e, mixed case.
+// Base directories are now accepted (required for file browsing).
 func TestValidateDevicePath(t *testing.T) {
 	allow := []string{"/sdcard/", "/data/local/tmp/"}
 
@@ -21,12 +22,13 @@ func TestValidateDevicePath(t *testing.T) {
 		{"happy_tmp_file", "/data/local/tmp/x", "/data/local/tmp/x", false},
 		{"happy_double_slash_normalized", "/sdcard//foo", "/sdcard/foo", false},
 		{"happy_nested", "/sdcard/dir/file.png", "/sdcard/dir/file.png", false},
+		{"happy_base_dir_with_slash", "/sdcard/", "/sdcard", false},
+		{"happy_base_dir_no_slash", "/sdcard", "/sdcard", false},
+		{"happy_base_dir_tmp", "/data/local/tmp/", "/data/local/tmp", false},
 
 		{"reject_traversal_dotdot", "/sdcard/../etc/shadow", "", true},
 		{"reject_percent_encoded_dotdot", "/sdcard/%2e%2e/etc", "", true},
 		{"reject_uppercase", "/SDCARD/foo", "", true},
-		{"reject_base_dir_itself_with_slash", "/sdcard/", "", true},
-		{"reject_base_dir_itself_no_slash", "/sdcard", "", true},
 		{"reject_empty", "", "", true},
 		{"reject_outside_allowlist", "/etc/passwd", "", true},
 		{"reject_relative", "sdcard/foo", "", true},
@@ -49,20 +51,35 @@ func TestValidateDevicePath(t *testing.T) {
 	}
 }
 
-// TestValidateDevicePathBaseDirItselfRule verifies that the base directory
-// itself is rejected even when both with and without trailing slash forms
-// appear in the allowlist.
-func TestValidateDevicePathBaseDirItselfRule(t *testing.T) {
+// TestValidateDevicePathBaseDirNowAllowed verifies that the base directory
+// itself is now accepted (previously rejected). This is required for file
+// browsing — the frontend must be able to list /sdcard/ to show contents.
+func TestValidateDevicePathBaseDirNowAllowed(t *testing.T) {
 	cases := []struct {
 		allow []string
 		input string
+		want  string
 	}{
-		{[]string{"/sdcard/"}, "/sdcard"},
-		{[]string{"/sdcard/"}, "/sdcard/"},
-		{[]string{"/sdcard"}, "/sdcard"},
+		{[]string{"/sdcard/"}, "/sdcard", "/sdcard"},
+		{[]string{"/sdcard/"}, "/sdcard/", "/sdcard"},
+		{[]string{"/sdcard"}, "/sdcard", "/sdcard"},
+		{[]string{"/data/local/tmp/"}, "/data/local/tmp", "/data/local/tmp"},
 	}
 	for _, tc := range cases {
-		_, err := ValidateDevicePath(tc.input, tc.allow)
-		assert.Equal(t, ErrPathNotAllowed, err, "input=%q allow=%v", tc.input, tc.allow)
+		got, err := ValidateDevicePath(tc.input, tc.allow)
+		assert.NoError(t, err, "base directory %q should be accepted with allow=%v", tc.input, tc.allow)
+		assert.Equal(t, tc.want, got, "base directory %q should clean to %q", tc.input, tc.want)
 	}
+}
+
+// TestIsBaseDirPath verifies that IsBaseDirPath correctly identifies base
+// directory paths for destructive operation guards.
+func TestIsBaseDirPath(t *testing.T) {
+	allow := []string{"/sdcard/", "/data/local/tmp/"}
+
+	assert.True(t, IsBaseDirPath("/sdcard", allow), "/sdcard is a base dir")
+	assert.True(t, IsBaseDirPath("/data/local/tmp", allow), "/data/local/tmp is a base dir")
+	assert.False(t, IsBaseDirPath("/sdcard/foo", allow), "/sdcard/foo is not a base dir")
+	assert.False(t, IsBaseDirPath("/etc", allow), "/etc is not an allowed base dir")
+	assert.False(t, IsBaseDirPath("/", allow), "/ is not an allowed base dir")
 }

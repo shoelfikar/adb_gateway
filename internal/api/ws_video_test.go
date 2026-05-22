@@ -441,9 +441,16 @@ func TestBuildAcceptOptions(t *testing.T) {
 		r := httptest.NewRequest(http.MethodGet, "/devices/abc/video", nil)
 		r.Header.Set("Sec-WebSocket-Protocol", "lease.abc-123")
 		opts := buildAcceptOptions(nil, r)
-		// lease subprotocol is not 64 chars, so it shouldn't be echoed here
-		// (that's handled by extractLeaseIDFromSubprotocol in ws_control.go)
-		assert.Empty(t, opts.Subprotocols)
+		// lease.<id> subprotocol is echoed back for WebSocket handshake
+		assert.Equal(t, []string{"lease.abc-123"}, opts.Subprotocols)
+	})
+
+	t.Run("api subprotocol", func(t *testing.T) {
+		r := httptest.NewRequest(http.MethodGet, "/devices/abc/video", nil)
+		r.Header.Set("Sec-WebSocket-Protocol", "api.my-secret-key")
+		opts := buildAcceptOptions(nil, r)
+		// api.<key> subprotocol is echoed back for WebSocket handshake
+		assert.Equal(t, []string{"api.my-secret-key"}, opts.Subprotocols)
 	})
 }
 

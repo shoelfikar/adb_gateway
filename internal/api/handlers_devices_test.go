@@ -129,7 +129,7 @@ func TestListDevicesWithDevices(t *testing.T) {
 	assert.Equal(t, "active", deviceMap["DEF456"])
 }
 
-func TestListDevicesExcludesFailed(t *testing.T) {
+func TestListDevicesIncludesFailed(t *testing.T) {
 	registry := session.NewRegistry()
 	entry1 := registry.GetOrCreate("AVAILABLE1")
 	entry1.SetState(session.StateIdle)
@@ -149,15 +149,66 @@ func TestListDevicesExcludesFailed(t *testing.T) {
 	err := json.Unmarshal(w.Body.Bytes(), &devices)
 	require.NoError(t, err)
 
-	// Only available1 and available2 should appear, not failed1
-	assert.Len(t, devices, 2)
-	serials := make(map[string]bool)
+	// All three devices should appear, including the failed one
+	// so the frontend can show the restart button.
+	assert.Len(t, devices, 3)
+	deviceMap := make(map[string]string)
 	for _, d := range devices {
-		serials[d.Serial] = true
-		assert.NotEqual(t, "failed", d.State)
+		deviceMap[d.Serial] = d.State
 	}
-	assert.True(t, serials["AVAILABLE1"])
-	assert.True(t, serials["AVAILABLE2"])
+	assert.Equal(t, "idle", deviceMap["AVAILABLE1"])
+	assert.Equal(t, "active", deviceMap["AVAILABLE2"])
+	assert.Equal(t, "failed", deviceMap["FAILED1"])
+}
+
+func TestListDevicesIncludesSessionID(t *testing.T) {
+	registry := session.NewRegistry()
+
+	// Device with no session — session_id must be omitted.
+	idleEntry := registry.GetOrCreate("IDLE1")
+	idleEntry.SetState(session.StateIdle)
+
+	// Device with an active session — session_id must be the real ID.
+	activeEntry := registry.GetOrCreate("ACTIVE1")
+	result := createTestLaunchResult()
+	srv, client := net.Pipe()
+	defer srv.Close()
+	defer client.Close()
+	result.VideoConn = client
+
+	launcher := &mockLauncherForAPI{result: result}
+	sess := session.NewDeviceSession("ACTIVE1", nil, launcher, session.DefaultSessionOpts())
+	err := sess.Start(context.Background())
+	require.NoError(t, err)
+	defer sess.Close(context.Background())
+
+	activeEntry.SetSession(sess)
+	activeEntry.SetState(session.StateActive)
+
+	router := setupTestRouter(registry)
+	req := httptest.NewRequest(http.MethodGet, "/devices", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var devices []deviceResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &devices))
+
+	byserial := make(map[string]deviceResponse)
+	for _, d := range devices {
+		byserial[d.Serial] = d
+	}
+
+	require.Contains(t, byserial, "IDLE1")
+	assert.Nil(t, byserial["IDLE1"].SessionID, "idle device must not expose session_id")
+
+	require.Contains(t, byserial, "ACTIVE1")
+	require.NotNil(t, byserial["ACTIVE1"].SessionID, "active device must expose session_id")
+	assert.Equal(t, sess.ID, *byserial["ACTIVE1"].SessionID)
+
+	// And confirm session_id is absent from the wire payload for the idle device.
+	assert.NotContains(t, w.Body.String(), `"session_id":"`+"" /* nothing */ +`"`)
 }
 
 func TestCreateSessionInvalidSerial(t *testing.T) {

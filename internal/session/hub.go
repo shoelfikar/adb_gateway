@@ -19,9 +19,10 @@ import (
 // is the raw 12 bytes (PTS + size + flags) preserving frame boundaries
 // for browser WebCodecs consumption.
 type Frame struct {
-	Header   [12]byte
-	Payload  []byte
-	KeyFrame bool
+	Header       [12]byte
+	Payload      []byte
+	KeyFrame     bool
+	ConfigPacket bool // PTS bit 63: H.264 SPS/PPS / codec reconfiguration
 }
 
 // wireBytes returns header || payload as a single allocated slice.
@@ -68,11 +69,12 @@ type Hub struct {
 
 	in chan *Frame // buffered ~16; supervisor produces, Hub consumes
 
-	// metaCache and keyframeCache feed late joiners.
-	// metaCache is set once before fan-out begins; keyframeCache is
-	// updated by the Hub goroutine only (single writer => atomic.Pointer
-	// is safe; readers in Subscribe load atomically).
+	// metaCache, configCache, and keyframeCache feed late joiners.
+	// metaCache is set once before fan-out begins; configCache and
+	// keyframeCache are updated by the Hub goroutine only (single writer
+	// => atomic.Pointer is safe; readers in Subscribe load atomically).
 	metaCache     atomic.Pointer[[12]byte]
+	configCache   atomic.Pointer[Frame]  // cached config packet (SPS/PPS)
 	keyframeCache atomic.Pointer[Frame]
 
 	// viewers map is owned by the Hub goroutine for writes
@@ -146,12 +148,12 @@ func (h *Hub) FrameCount() uint64 {
 	return h.frameCount.Load()
 }
 
-// Subscribe registers a new viewer and atomically pre-loads metadata
-// and the cached keyframe (if any) into the viewer's send channel
-// BEFORE adding it to the broadcast set. Returns the viewer's read-only
-// channel and an unsubscribe function.
+// Subscribe registers a new viewer and atomically pre-loads metadata,
+// the cached config packet, and the cached keyframe (if any) into the
+// viewer's send channel BEFORE adding it to the broadcast set. Returns
+// the viewer's read-only channel and an unsubscribe function.
 //
-// Per STR-07 ordering: late joiners receive (metadata, lastKeyframe?,
+// Per STR-07 ordering: late joiners receive (metadata, config?, lastKeyframe?,
 // live tail). Implemented by writing to the freshly-allocated send
 // channel before any Hub goroutine can fan out to it.
 func (h *Hub) Subscribe(viewerID string) (<-chan []byte, func(), error) {
@@ -166,12 +168,16 @@ func (h *Hub) Subscribe(viewerID string) (<-chan []byte, func(), error) {
 		copy(metaCopy, meta[:])
 		v.send <- metaCopy
 	}
-	// 2. Preload last keyframe if any.
+	// 2. Preload cached config packet (SPS/PPS for late joiners).
+	if cfg := h.configCache.Load(); cfg != nil {
+		v.send <- cfg.wireBytes()
+	}
+	// 3. Preload last keyframe if any.
 	if kf := h.keyframeCache.Load(); kf != nil {
 		v.send <- kf.wireBytes()
 	}
 
-	// 3. Add to broadcast set (under write lock).
+	// 4. Add to broadcast set (under write lock).
 	h.mu.Lock()
 	h.viewers[viewerID] = v
 	h.mu.Unlock()
@@ -206,7 +212,10 @@ func (h *Hub) Run(ctx context.Context) error {
 			if f == nil {
 				continue
 			}
-			// 1. Update keyframe cache atomically (Hub is the single writer).
+			// 1. Update caches atomically (Hub is the single writer).
+			if f.ConfigPacket {
+				h.configCache.Store(f)
+			}
 			if f.KeyFrame {
 				h.keyframeCache.Store(f)
 			}

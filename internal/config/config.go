@@ -35,6 +35,12 @@ type WSConfig struct {
 	PingIntervalSeconds int   `koanf:"ping_interval_seconds"`
 	IdleTimeoutSeconds  int   `koanf:"idle_timeout_seconds"`
 	ReadLimitBytes      int64 `koanf:"read_limit_bytes"`
+	// WriteTimeoutSeconds bounds every ws.Write call. Without a per-write
+	// deadline, a stalled browser-side TCP path blocks the relay drain loop,
+	// allowing the Hub's non-blocking fan-out to accumulate drops until it
+	// evicts the viewer with `slow_consumer` (1008) — surfacing as silent
+	// mid-session disconnects. See debug session ws-disconnect-remote-stream.
+	WriteTimeoutSeconds int `koanf:"write_timeout_seconds"`
 }
 
 // ScrcpyConfig holds Phase 3 SCR-07 launcher tunables. Zero values mean
@@ -97,6 +103,10 @@ type FilesConfig struct {
 	// AllowedBasePaths is the allowlist of on-device base directories
 	// (D-11/D-12). Default ["/sdcard/", "/data/local/tmp/"].
 	AllowedBasePaths []string `koanf:"allowed_base_paths"`
+	// DefaultBrowsePath is the on-device path used when the file browser
+	// is opened without specifying a path. Defaults to the first
+	// AllowedBasePaths entry ("/sdcard/").
+	DefaultBrowsePath string `koanf:"default_browse_path"`
 	// MaxUploadBytes caps the request body size for uploads (D-14).
 	// Default 524288000 (500 MiB).
 	MaxUploadBytes int64 `koanf:"max_upload_bytes"`
@@ -196,11 +206,16 @@ func Load() (*Config, error) {
 	}
 
 	// Phase 2 defaults — use k.Exists to distinguish "unset" from "set to zero"
+	// viewer_buffer_frames: raised from 60 -> 240 (~4s headroom @ 60fps) to
+	// absorb transient browser-side TCP/Wi-Fi stalls without evicting viewers.
+	// See debug session ws-disconnect-remote-stream.
 	if !k.Exists("stream.viewer_buffer_frames") {
-		_ = k.Set("stream.viewer_buffer_frames", 60)
+		_ = k.Set("stream.viewer_buffer_frames", 240)
 	}
+	// max_consecutive_drops: raised from 120 -> 300 (~5s @ 60fps) for the
+	// same reason — be more forgiving of brief backpressure bursts.
 	if !k.Exists("stream.max_consecutive_drops") {
-		_ = k.Set("stream.max_consecutive_drops", 120)
+		_ = k.Set("stream.max_consecutive_drops", 300)
 	}
 	if !k.Exists("stream.audio_enabled") {
 		_ = k.Set("stream.audio_enabled", true)
@@ -216,6 +231,11 @@ func Load() (*Config, error) {
 	}
 	if !k.Exists("ws.read_limit_bytes") {
 		_ = k.Set("ws.read_limit_bytes", 4194304)
+	}
+	// Per-write deadline for every ws.Write — prevents stalled browser
+	// sockets from blocking the relay drain loop indefinitely.
+	if !k.Exists("ws.write_timeout_seconds") {
+		_ = k.Set("ws.write_timeout_seconds", 10)
 	}
 
 	// Phase 3 SCR-07 defaults — strings default to scrcpy server defaults,
@@ -241,7 +261,10 @@ func Load() (*Config, error) {
 		_ = k.Set("screenshot.rate_per_sec_per_key", 5.0)
 	}
 	if !k.Exists("files.allowed_base_paths") {
-		_ = k.Set("files.allowed_base_paths", []string{"/sdcard/", "/data/local/tmp/"})
+		_ = k.Set("files.allowed_base_paths", []string{"/storage/emulated/0/", "/sdcard/", "/data/local/tmp/"})
+	}
+	if !k.Exists("files.default_browse_path") {
+		_ = k.Set("files.default_browse_path", "/storage/emulated/0/")
 	}
 	if !k.Exists("files.max_upload_bytes") {
 		_ = k.Set("files.max_upload_bytes", int64(524288000))
@@ -304,6 +327,9 @@ func (c *Config) Validate() error {
 	}
 	if c.WS.ReadLimitBytes < 65536 {
 		return fmt.Errorf("ws.read_limit_bytes must be >= 65536")
+	}
+	if c.WS.WriteTimeoutSeconds <= 0 {
+		return fmt.Errorf("ws.write_timeout_seconds must be > 0")
 	}
 	return nil
 }

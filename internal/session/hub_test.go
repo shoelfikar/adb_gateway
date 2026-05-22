@@ -41,6 +41,16 @@ func mkFrame(seq byte, key bool) *Frame {
 	}
 }
 
+// mkConfigFrame creates a test Frame that represents a config packet (SPS/PPS).
+// Uses a distinct header byte pattern to differentiate from data frames.
+func mkConfigFrame(seq byte) *Frame {
+	return &Frame{
+		Header:       [12]byte{0x80, seq, seq, seq, 0, 0, 0, 0, 0, 0, 0, 8},
+		Payload:      bytes.Repeat([]byte{seq}, 8),
+		ConfigPacket: true,
+	}
+}
+
 // TestHubMultiViewer verifies STR-04: two subscribers receive the same frame
 // bytes from a single producer (1:N fan-out).
 func TestHubMultiViewer(t *testing.T) {
@@ -314,6 +324,95 @@ func TestHubKeyframeReplacedAtomically(t *testing.T) {
 	expectedK2 := mkFrame(0x02, true).wireBytes()
 	msg2 := readChan(t, lateCh, 500*time.Millisecond, "late joiner keyframe")
 	assert.Equal(t, expectedK2, msg2, "second message must be K2 (most recent keyframe), not K1")
+}
+
+// TestHubConfigPacketCached verifies that config packets (SPS/PPS) are cached
+// and preloaded for late-joining viewers. The preload order must be:
+// metadata → config packet → keyframe → live tail.
+func TestHubConfigPacketCached(t *testing.T) {
+	h := newTestHub(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	go func() {
+		if err := h.Run(ctx); err != nil && err != context.Canceled {
+			t.Logf("hub run: %v", err)
+		}
+	}()
+
+	// Publish: config packet → keyframe → P-frame (typical scrcpy sequence).
+	h.Publish(mkConfigFrame(0xCC))  // config (SPS/PPS)
+	h.Publish(mkFrame(0x01, true))   // K1
+	h.Publish(mkFrame(0x02, false))   // P1
+
+	// Give Hub time to process and cache.
+	time.Sleep(50 * time.Millisecond)
+
+	// Late joiner subscribes after all frames were published.
+	lateCh, _, err := h.Subscribe("late")
+	require.NoError(t, err)
+
+	// 1. Metadata.
+	expectedMeta := []byte{0xAA, 0xBB, 0xCC, 0x44, 0x33, 0x22, 0x11, 0x00, 0x10, 0x00, 0x00, 0x00}
+	msg1 := readChan(t, lateCh, 500*time.Millisecond, "late joiner metadata")
+	assert.Equal(t, expectedMeta, msg1, "first message must be metadata")
+
+	// 2. Config packet (SPS/PPS).
+	expectedCfg := mkConfigFrame(0xCC).wireBytes()
+	msg2 := readChan(t, lateCh, 500*time.Millisecond, "late joiner config")
+	assert.Equal(t, expectedCfg, msg2, "second message must be cached config packet")
+
+	// 3. Keyframe.
+	expectedK1 := mkFrame(0x01, true).wireBytes()
+	msg3 := readChan(t, lateCh, 500*time.Millisecond, "late joiner keyframe")
+	assert.Equal(t, expectedK1, msg3, "third message must be cached keyframe")
+
+	// 4. Live P-frame.
+	h.Publish(mkFrame(0x03, false))
+	expectedP2 := mkFrame(0x03, false).wireBytes()
+	msg4 := readChan(t, lateCh, 500*time.Millisecond, "late joiner live P2")
+	assert.Equal(t, expectedP2, msg4, "fourth message must be live P2")
+}
+
+// TestHubConfigPacketUpdatedOnReconfig verifies that when a new config packet
+// arrives (e.g. resolution change), the cache is updated so late joiners get
+// the latest SPS/PPS before the matching keyframe.
+func TestHubConfigPacketUpdatedOnReconfig(t *testing.T) {
+	h := newTestHub(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	go func() {
+		if err := h.Run(ctx); err != nil && err != context.Canceled {
+			t.Logf("hub run: %v", err)
+		}
+	}()
+
+	// Initial stream: config1 → K1.
+	h.Publish(mkConfigFrame(0xAA))
+	h.Publish(mkFrame(0x01, true))
+
+	// Resolution change: config2 → K2.
+	h.Publish(mkConfigFrame(0xBB))
+	h.Publish(mkFrame(0x02, true))
+
+	time.Sleep(50 * time.Millisecond)
+
+	lateCh, _, err := h.Subscribe("late")
+	require.NoError(t, err)
+
+	// Skip metadata.
+	readChan(t, lateCh, 500*time.Millisecond, "metadata")
+
+	// Config must be config2 (0xBB), not config1 (0xAA).
+	expectedCfg := mkConfigFrame(0xBB).wireBytes()
+	msg := readChan(t, lateCh, 500*time.Millisecond, "config packet")
+	assert.Equal(t, expectedCfg, msg, "config cache must contain latest config packet")
+
+	// Keyframe must be K2 (0x02), not K1.
+	expectedK2 := mkFrame(0x02, true).wireBytes()
+	msg2 := readChan(t, lateCh, 500*time.Millisecond, "keyframe")
+	assert.Equal(t, expectedK2, msg2, "keyframe cache must contain K2")
 }
 
 // TestHubRunCancel verifies that cancelling the context closes all viewer

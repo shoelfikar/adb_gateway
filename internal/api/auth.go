@@ -28,6 +28,11 @@ func APIKeyAuth(primary, secondary string) func(http.Handler) http.Handler {
 					slog.Warn("api key passed via query parameter; prefer X-API-Key header for security")
 				}
 			}
+			// Browser WebSocket clients cannot set custom headers during upgrade.
+			// Fall back to Sec-WebSocket-Protocol subprotocol ("api.<key>" format).
+			if key == "" {
+				key = extractAPIKeyFromSubprotocol(r)
+			}
 
 			if key == "" {
 				writeError(w, ErrUnauthorized)

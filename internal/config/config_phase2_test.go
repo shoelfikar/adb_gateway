@@ -21,13 +21,15 @@ func TestPhase2DefaultValues(t *testing.T) {
 	cfg, err := Load()
 	require.NoError(t, err)
 
-	assert.Equal(t, 60, cfg.Stream.ViewerBufferFrames, "default viewer_buffer_frames")
-	assert.Equal(t, 120, cfg.Stream.MaxConsecutiveDrops, "default max_consecutive_drops")
+	// Defaults raised in debug session ws-disconnect-remote-stream: 60->240 / 120->300.
+	assert.Equal(t, 240, cfg.Stream.ViewerBufferFrames, "default viewer_buffer_frames")
+	assert.Equal(t, 300, cfg.Stream.MaxConsecutiveDrops, "default max_consecutive_drops")
 	assert.True(t, cfg.Stream.AudioEnabled, "default audio_enabled")
 	assert.Equal(t, 60, cfg.Control.LeaseTTLSeconds, "default lease_ttl_seconds")
 	assert.Equal(t, 25, cfg.WS.PingIntervalSeconds, "default ping_interval_seconds")
 	assert.Equal(t, 90, cfg.WS.IdleTimeoutSeconds, "default idle_timeout_seconds")
 	assert.Equal(t, int64(4194304), cfg.WS.ReadLimitBytes, "default read_limit_bytes")
+	assert.Equal(t, 10, cfg.WS.WriteTimeoutSeconds, "default write_timeout_seconds")
 }
 
 func TestPhase2YAMLOverride(t *testing.T) {
@@ -47,8 +49,8 @@ stream:
 	require.NoError(t, err)
 
 	assert.Equal(t, 30, cfg.Stream.ViewerBufferFrames, "YAML override viewer_buffer_frames")
-	// Others should still be defaults
-	assert.Equal(t, 120, cfg.Stream.MaxConsecutiveDrops)
+	// Others should still be defaults (raised in debug session ws-disconnect-remote-stream).
+	assert.Equal(t, 300, cfg.Stream.MaxConsecutiveDrops)
 }
 
 func TestPhase2EnvOverride(t *testing.T) {
@@ -109,6 +111,16 @@ func TestPhase2Validate(t *testing.T) {
 			modify: func(c *Config) { c.WS.PingIntervalSeconds = 25; c.WS.IdleTimeoutSeconds = 25 },
 			wantErr: "idle_timeout_seconds",
 		},
+		{
+			name: "write_timeout_seconds_zero",
+			modify: func(c *Config) { c.WS.WriteTimeoutSeconds = 0 },
+			wantErr: "write_timeout_seconds",
+		},
+		{
+			name: "write_timeout_seconds_negative",
+			modify: func(c *Config) { c.WS.WriteTimeoutSeconds = -1 },
+			wantErr: "write_timeout_seconds",
+		},
 	}
 
 	for _, tc := range tests {
@@ -128,6 +140,7 @@ func TestPhase2Validate(t *testing.T) {
 					PingIntervalSeconds: 25,
 					IdleTimeoutSeconds:  90,
 					ReadLimitBytes:      4194304,
+					WriteTimeoutSeconds: 10,
 				},
 			}
 			tc.modify(cfg)

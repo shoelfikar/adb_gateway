@@ -71,13 +71,17 @@ func ListFilesForTest(registry *session.Registry, runner FileShellRunner, cfg *c
 			writeError(w, ErrDeviceNotFound)
 			return
 		}
-		cleaned, err := ValidateDevicePath(r.URL.Query().Get("path"), cfg.Files.AllowedBasePaths)
+		reqPath := r.URL.Query().Get("path")
+		if reqPath == "" {
+			reqPath = cfg.Files.DefaultBrowsePath
+		}
+		cleaned, err := ValidateDevicePath(reqPath, cfg.Files.AllowedBasePaths)
 		if err != nil {
 			writeError(w, ErrPathNotAllowed)
 			return
 		}
 
-		cmd := "ls -lA --time-style=full-iso " + shellQuote(cleaned)
+		cmd := "ls -lA -ll " + shellQuote(cleaned)
 		out, err := runner.ShellRunRaw(r.Context(), serial, cmd)
 		if err != nil {
 			slog.Warn("files: ls failed", "device", serial, "path", cleaned, "error", err)
@@ -109,7 +113,7 @@ func StatFileForTest(registry *session.Registry, runner FileShellRunner, cfg *co
 			return
 		}
 
-		cmd := "ls -lAd --time-style=full-iso " + shellQuote(cleaned)
+		cmd := "ls -lAd -ll " + shellQuote(cleaned)
 		out, err := runner.ShellRunRaw(r.Context(), serial, cmd)
 		if err != nil {
 			slog.Warn("files: stat ls failed", "device", serial, "path", cleaned, "error", err)

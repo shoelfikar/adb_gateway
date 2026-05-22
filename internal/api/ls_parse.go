@@ -91,7 +91,7 @@ func ParseLSLine(line, dir string) (Entry, bool) {
 // ParseLSOutput parses the full output of `ls -lA --time-style=full-iso`
 // into a slice of Entry. Unparseable lines (headers, noise) are skipped.
 func ParseLSOutput(out []byte, dir string) []Entry {
-	var entries []Entry
+	entries := make([]Entry, 0)
 	s := bufio.NewScanner(strings.NewReader(string(out)))
 	for s.Scan() {
 		entry, ok := ParseLSLine(s.Text(), dir)

@@ -57,6 +57,24 @@ func pingLoop(ctx context.Context, ws *websocket.Conn, cfg *config.Config) error
 	}
 }
 
+// wsWriteWithTimeout wraps ws.Write with a per-call deadline derived from
+// cfg.WS.WriteTimeoutSeconds. A bounded write deadline ensures that a stalled
+// browser TCP path fails fast with a defined error rather than blocking
+// indefinitely on the long-lived session context — which would in turn stall
+// drain of the viewer's send channel and cause the Hub to evict the viewer
+// with `slow_consumer` (1008). See debug session ws-disconnect-remote-stream.
+func wsWriteWithTimeout(ctx context.Context, ws *websocket.Conn, cfg *config.Config, typ websocket.MessageType, msg []byte) error {
+	timeout := time.Duration(cfg.WS.WriteTimeoutSeconds) * time.Second
+	if timeout <= 0 {
+		// Defensive: if misconfigured, fall back to a sane default rather than
+		// reverting to the unbounded behavior that caused the original bug.
+		timeout = 10 * time.Second
+	}
+	wctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	return ws.Write(wctx, typ, msg)
+}
+
 // subscribeAndRelay is the shared body for /video and /audio handlers:
 //  1. Subscribe to hub.
 //  2. Spawn ping goroutine.
@@ -98,7 +116,7 @@ func subscribeAndRelay(ctx context.Context, ws *websocket.Conn, hub *session.Hub
 				ws.Close(websocket.StatusPolicyViolation, "slow_consumer")
 				return fmt.Errorf("hub evicted viewer %s on stream %s", viewerID, streamName)
 			}
-			if err := ws.Write(ctx, websocket.MessageBinary, msg); err != nil {
+			if err := wsWriteWithTimeout(ctx, ws, cfg, websocket.MessageBinary, msg); err != nil {
 				return fmt.Errorf("ws write: %w", err)
 			}
 		}
@@ -120,9 +138,13 @@ func buildAcceptOptions(allowedOrigins []string, r *http.Request) *websocket.Acc
 	if proto := r.Header.Get("Sec-WebSocket-Protocol"); proto != "" {
 		for _, p := range strings.Split(proto, ",") {
 			p = strings.TrimSpace(p)
-			if len(p) == 64 {
+			// Accept "api.<key>" and "lease.<id>" prefixed subprotocols used by
+			// browser WebSocket clients that cannot set custom headers.
+			if strings.HasPrefix(p, "api.") || strings.HasPrefix(p, "lease.") {
 				opts.Subprotocols = append(opts.Subprotocols, p)
-				break
+			} else if len(p) == 64 {
+				// Legacy: raw 64-char subprotocol (API key or lease ID without prefix).
+				opts.Subprotocols = append(opts.Subprotocols, p)
 			}
 		}
 	}

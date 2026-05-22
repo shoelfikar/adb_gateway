@@ -1,7 +1,8 @@
-// Package api — handlers_apps.go implements D-AM-01..04, D-AM-08:
+// Package api — handlers_apps.go implements D-AM-01..04, D-AM-08, D-AM-09:
 //
 //	GET    /devices/{serial}/apps                  list installed packages (D-AM-01/04)
 //	GET    /devices/{serial}/apps/{pkg}            rich package details via dumpsys (D-AM-02)
+//	POST   /devices/{serial}/apps/{pkg}/launch     launch app on device (D-AM-09)
 //	DELETE /devices/{serial}/apps/{pkg}            uninstall package (D-AM-08)
 //
 // List uses a single `pm list packages` call with flags selected by the
@@ -306,4 +307,180 @@ func UninstallAppForTest(registry *session.Registry, runner FileShellRunner, cfg
 
 		writeJSON(w, http.StatusOK, map[string]any{"status": "uninstalled", "package": pkg})
 	}
+}
+
+// ---------------------------------------------------------------------------
+// LaunchApp — POST /devices/{serial}/apps/{pkg}/launch
+// ---------------------------------------------------------------------------
+
+// LaunchApp is the production wiring for POST /apps/{pkg}/launch.
+func LaunchApp(registry *session.Registry, hostServices *adb.HostServices, cfg *config.Config) http.HandlerFunc {
+	return LaunchAppForTest(registry, hostServices, cfg)
+}
+
+// LaunchAppForTest builds the launch-app handler with an injectable runner.
+//
+// Launches the app using a two-step resolve-then-launch approach:
+//  1. Resolve the launcher activity via `cmd package resolve-activity --brief`
+//     (Android 7.0+). If a component is found, use `am start -n <component>`
+//     for reliable activity launch with proper error reporting.
+//  2. If resolve fails (older device, command unavailable, or no component
+//     found), fall back to `monkey -p <pkg> -c ... 1`.
+//
+// `am start` is preferred because it directly starts the activity via intent
+// rather than injecting a synthetic UI event. Monkey can report success
+// (exit 0, "Events injected: 1") without actually starting the app on screen.
+//
+// Error mapping:
+//   - package not found on device -> 404 PACKAGE_NOT_FOUND
+//   - launch reports error in output -> 500 LAUNCH_FAILED
+func LaunchAppForTest(registry *session.Registry, runner FileShellRunner, cfg *config.Config) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		serial, ok := validateSerial(w, r)
+		if !ok {
+			return
+		}
+		if _, ok := registry.Get(serial); !ok {
+			writeError(w, ErrDeviceNotFound)
+			return
+		}
+
+		// Validate package name BEFORE any shell call (REQ-AM-PKG-VALIDATE).
+		pkg, ok := validatePackage(w, r)
+		if !ok {
+			return
+		}
+
+		// Step 1: Try to resolve the launcher activity (Android 7.0+).
+		// am start provides more reliable launching and better error reporting
+		// than monkey, which can report success without actually starting the app.
+		component := resolveLauncherActivity(r.Context(), runner, serial, pkg)
+
+		var out []byte
+		var err error
+		var usedAmStart bool
+
+		if component != "" {
+			// Launch using am start with the resolved component.
+			launchCmd := "am start -n " + shellQuote(component)
+			out, err = runner.ShellRunRaw(r.Context(), serial, launchCmd)
+			usedAmStart = true
+		}
+
+		// Fallback: Use monkey for older devices or if resolve-activity failed.
+		if !usedAmStart {
+			cmd := "monkey -p " + shellQuote(pkg) + " -c android.intent.category.LAUNCHER 1"
+			out, err = runner.ShellRunRaw(r.Context(), serial, cmd)
+		}
+
+		if err != nil {
+			method := "monkey"
+			if usedAmStart {
+				method = "am-start"
+			}
+			slog.Warn("apps: launch failed", "device", serial, "pkg", pkg, "method", method, "error", err)
+			writeError(w, ErrLaunchFailed)
+			return
+		}
+
+		outStr := strings.TrimSpace(string(out))
+		if usedAmStart {
+			// Parse am start output for errors.
+			// Success: "Starting: Intent { cmp=... }"
+			// Failure: "Error: Activity does not exist", "SecurityException", etc.
+			lower := strings.ToLower(outStr)
+			if strings.Contains(lower, "does not exist") || strings.Contains(lower, "not found") {
+				writeError(w, ErrPackageNotFound)
+				return
+			}
+			if strings.Contains(lower, "error") || strings.Contains(lower, "exception") {
+				writeError(w, &DomainError{
+					Code:       ErrLaunchFailed.Code,
+					HTTPStatus: ErrLaunchFailed.HTTPStatus,
+					Message:    ErrLaunchFailed.Message + ": " + truncateOutput(outStr, 256),
+				})
+				return
+			}
+		} else {
+			// Parse monkey output — monkey reports errors in output even with exit 0.
+			// Common patterns:
+			//   "Error: Unknown package: <pkg>" — package not installed
+			//   "// Error: No activities found" — no launcher activity
+			//   "** No activities found to run, monkey aborted." — Android TV apps
+			lower := strings.ToLower(outStr)
+			if strings.Contains(lower, "error: unknown package") || strings.Contains(lower, "not installed") {
+				writeError(w, ErrPackageNotFound)
+				return
+			}
+			if strings.Contains(lower, "error") || strings.Contains(lower, "// error") ||
+				strings.Contains(lower, "no activities found") || strings.Contains(lower, "monkey aborted") {
+				writeError(w, &DomainError{
+					Code:       ErrLaunchFailed.Code,
+					HTTPStatus: ErrLaunchFailed.HTTPStatus,
+					Message:    ErrLaunchFailed.Message + ": " + truncateOutput(outStr, 256),
+				})
+				return
+			}
+		}
+
+		writeJSON(w, http.StatusOK, map[string]any{
+			"status":  "launched",
+			"package": pkg,
+		})
+	}
+}
+
+// parseResolveActivity extracts the component name from cmd package
+// resolve-activity --brief output. Returns empty string if no valid component found.
+//
+// Expected output format (Android 7.0+):
+//
+//	android.intent.action.MAIN
+//	com.example/com.example.MainActivity
+//
+// The component line may also use the short form:
+//
+//	com.example/.MainActivity
+func parseResolveActivity(output, pkg string) string {
+	lines := strings.Split(strings.TrimSpace(output), "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		line := strings.TrimSpace(lines[i])
+		if line == "" || strings.HasPrefix(line, "android.") {
+			continue
+		}
+		if strings.HasPrefix(line, pkg+"/") {
+			return line
+		}
+	}
+	return ""
+}
+
+// resolveLauncherActivity finds the main launcher activity for pkg.
+// Tries android.intent.category.LAUNCHER first, then falls back to
+// android.intent.category.LEANBACK_LAUNCHER for Android TV apps.
+// Returns the component name (e.g. "com.foo/.MainActivity") or empty string.
+func resolveLauncherActivity(ctx context.Context, runner FileShellRunner, serial, pkg string) string {
+	categories := []string{
+		"android.intent.category.LAUNCHER",
+		"android.intent.category.LEANBACK_LAUNCHER",
+	}
+	for _, cat := range categories {
+		resolveCmd := "cmd package resolve-activity --brief -c " + cat + " -a android.intent.action.MAIN " + shellQuote(pkg)
+		resolveOut, resolveErr := runner.ShellRunRaw(ctx, serial, resolveCmd)
+		if resolveErr != nil {
+			continue
+		}
+		if component := parseResolveActivity(string(resolveOut), pkg); component != "" {
+			return component
+		}
+	}
+	return ""
+}
+
+// truncateOutput truncates s to maxLen bytes for inclusion in error messages.
+func truncateOutput(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "..."
 }

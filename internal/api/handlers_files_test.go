@@ -176,6 +176,8 @@ func TestFilesDelete(t *testing.T) {
 
 // TestFilesPathTraversal is the security invariant test: every traversal
 // input must be rejected BEFORE any ADB call (zero ADB calls observed).
+// Note: /sdcard/ is no longer in this list because base directories are
+// now valid paths for file browsing (see TestFilesBaseDirAccess).
 func TestFilesPathTraversal(t *testing.T) {
 	registry := session.NewRegistry()
 	registry.GetOrCreate("ABC123").SetState(session.StateActive)
@@ -187,7 +189,6 @@ func TestFilesPathTraversal(t *testing.T) {
 		"/sdcard/%2e%2e/etc",
 		"/SDCARD/foo",
 		"/etc/shadow",
-		"/sdcard/", // base dir itself
 		"",
 	}
 
@@ -212,4 +213,29 @@ func TestFilesPathTraversal(t *testing.T) {
 	}
 
 	assert.Zero(t, runner.totalCalls(), "no ADB calls must be made for traversal inputs")
+}
+
+// TestFilesBaseDirAccess verifies that base directories are now accessible
+// for file operations (required for file browsing to work).
+func TestFilesBaseDirAccess(t *testing.T) {
+	registry := session.NewRegistry()
+	registry.GetOrCreate("ABC123").SetState(session.StateActive)
+	runner := newFakeFileRunner()
+	r := setupFilesRouter(registry, runner)
+
+	// DELETE /sdcard/ (non-recursive) should pass path validation and
+	// attempt rm -f on the directory (which fails on device, but the
+	// handler should at least accept the path).
+	req := httptest.NewRequest(http.MethodDelete, "/devices/ABC123/files?path=/sdcard/", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	// Path validation should pass; the rm -f will succeed in the fake
+	assert.Equal(t, http.StatusOK, w.Code, "base directory /sdcard/ should pass path validation for delete")
+
+	// DELETE /sdcard/?recursive=1 should be BLOCKED (base dir recursive delete).
+	req2 := httptest.NewRequest(http.MethodDelete, "/devices/ABC123/files?path=/sdcard/&recursive=1", nil)
+	w2 := httptest.NewRecorder()
+	r.ServeHTTP(w2, req2)
+	assert.Equal(t, http.StatusForbidden, w2.Code, "recursive delete of base dir /sdcard/ should be forbidden")
+	assert.Contains(t, w2.Body.String(), "BASE_DIR_DELETE_NOT_ALLOWED")
 }

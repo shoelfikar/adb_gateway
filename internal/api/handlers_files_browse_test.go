@@ -94,7 +94,8 @@ func (r *recordingBrowseRunner) ShellV2Stream(ctx context.Context, _, cmd string
 // browseTestConfig returns a Config suitable for browse handler tests.
 func browseTestConfig() *config.Config {
 	cfg := testConfig()
-	cfg.Files.AllowedBasePaths = []string{"/sdcard/", "/data/local/tmp/"}
+	cfg.Files.AllowedBasePaths = []string{"/storage/emulated/0/", "/sdcard/", "/data/local/tmp/"}
+	cfg.Files.DefaultBrowsePath = "/storage/emulated/0/"
 	cfg.Files.MaxUploadBytes = 5 * 1024 * 1024 // 5 MiB
 	return cfg
 }
@@ -133,7 +134,6 @@ func TestListFiles_PathTraversalZeroCalls(t *testing.T) {
 		// null-byte omitted: httptest.NewRequest panics on control chars in URLs;
 		// ValidateDevicePath rejects null bytes at the URL-decode step, which is
 		// covered by path_validate_test.go.
-		{"base-dir-itself", "/sdcard/"},
 	}
 
 	for _, tc := range badPaths {
@@ -149,6 +149,61 @@ func TestListFiles_PathTraversalZeroCalls(t *testing.T) {
 
 	assert.Equal(t, 0, runner.Calls(),
 		"ZERO ADB calls must be made for traversal inputs (Path Validation invariant)")
+}
+
+// TestListFiles_EmptyPathDefaultsToBrowsePath verifies that calling GET /files
+// without a path parameter defaults to DefaultBrowsePath and returns a listing.
+func TestListFiles_EmptyPathDefaultsToBrowsePath(t *testing.T) {
+	registry := session.NewRegistry()
+	registry.GetOrCreate("ABC123").SetState(session.StateActive)
+
+	var capturedCmd string
+	runner := newRecordingBrowseRunner()
+	runner.shellFn = func(ctx context.Context, cmd string) ([]byte, error) {
+		capturedCmd = cmd
+		return []byte("drwxrwx--- 2 u0_a123 sdcard_rw 4096 2026-05-17 10:23:45.000000000 +0000 DCIM\n"), nil
+	}
+
+	cfg := browseTestConfig()
+	r := setupBrowseRouter(registry, runner, cfg)
+
+	// No path query parameter — should default to /sdcard/
+	req := httptest.NewRequest(http.MethodGet,
+		"/devices/ABC123/files?op=list", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code, "empty path should default to DefaultBrowsePath and succeed")
+	assert.Contains(t, capturedCmd, "/storage/emulated/0", "should issue ls command for default browse path")
+	assert.Contains(t, w.Body.String(), "DCIM", "response should contain directory entry")
+	assert.True(t, strings.HasPrefix(strings.TrimSpace(w.Body.String()), "["), "response must be a JSON array, not null")
+}
+
+// TestListFiles_BaseDirAllowed verifies that listing the base directory
+// (e.g. /sdcard/) is accepted and issues an ls command. The file browser
+// must be able to list the root of an allowed base directory.
+func TestListFiles_BaseDirAllowed(t *testing.T) {
+	registry := session.NewRegistry()
+	registry.GetOrCreate("ABC123").SetState(session.StateActive)
+
+	var capturedCmd string
+	runner := newRecordingBrowseRunner()
+	runner.shellFn = func(ctx context.Context, cmd string) ([]byte, error) {
+		capturedCmd = cmd
+		return []byte("drwxrwx--- 2 u0_a123 sdcard_rw 4096 2026-05-17 10:23:45.000000000 +0000 DCIM\n"), nil
+	}
+
+	cfg := browseTestConfig()
+	r := setupBrowseRouter(registry, runner, cfg)
+
+	req := httptest.NewRequest(http.MethodGet,
+		"/devices/ABC123/files?op=list&path=/sdcard/", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code, "listing base directory /sdcard/ should succeed")
+	assert.Contains(t, capturedCmd, "ls -lA", "should issue ls command for base directory")
+	assert.Contains(t, w.Body.String(), "DCIM", "response should contain directory entry")
 }
 
 // TestStatFile_SameEntryShape verifies stat returns the same Entry struct

@@ -142,7 +142,7 @@ func StreamSession(registry *session.Registry, allowedOrigins []string, cfg *con
 					continue
 				}
 				if msgType != websocket.MessageText {
-					writeWSError(ctx, ws, "INVALID_MESSAGE_TYPE", "control messages must be text JSON")
+					writeWSError(ctx, ws, cfg, "INVALID_MESSAGE_TYPE", "control messages must be text JSON")
 					continue
 				}
 				cmsg, derr := decodeControlEnvelope(raw)
@@ -153,11 +153,11 @@ func StreamSession(registry *session.Registry, allowedOrigins []string, cfg *con
 					} else if errors.Is(derr, scrcpy.ErrControlPayloadTooLarge) {
 						code = "CONTROL_PAYLOAD_TOO_LARGE"
 					}
-					writeWSError(ctx, ws, code, derr.Error())
+					writeWSError(ctx, ws, cfg, code, derr.Error())
 					continue
 				}
 				if !mgr.IsHeldBy(lease.ID) {
-					writeWSError(ctx, ws, "NOT_CONTROLLER", "lease no longer held")
+					writeWSError(ctx, ws, cfg, "NOT_CONTROLLER", "lease no longer held")
 					ws.Close(4001, "lease_lost")
 					readErr <- errors.New("lease lost")
 					return

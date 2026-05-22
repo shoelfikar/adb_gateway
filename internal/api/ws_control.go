@@ -83,6 +83,17 @@ func StreamControl(registry *session.Registry, allowedOrigins []string, cfg *con
 		log := slog.With("device", serial, "viewer_id", viewerID, "lease_id", leaseID)
 		log.Info("control connected")
 
+		// Track the final disconnect cause for structured close-code logging.
+		// See debug session ws-disconnect-remote-stream.
+		var finalErr error
+		defer func() {
+			closeCode := websocket.CloseStatus(finalErr)
+			log.Info("control disconnected",
+				"close_code", int(closeCode),
+				"error", finalErr,
+			)
+		}()
+
 		// On disconnect, start grace timer (D-10).
 		defer func() {
 			if err := mgr.BeginGrace(leaseID); err == nil {
@@ -107,7 +118,7 @@ func StreamControl(registry *session.Registry, allowedOrigins []string, cfg *con
 					"type":   "lease_released",
 					"reason": string(reason),
 				})
-				_ = ws.Write(ctx, websocket.MessageText, payload)
+				_ = wsWriteWithTimeout(ctx, ws, cfg, websocket.MessageText, payload)
 				ws.Close(websocket.StatusNormalClosure, "lease_released")
 			case <-ctx.Done():
 				return
@@ -121,11 +132,12 @@ func StreamControl(registry *session.Registry, allowedOrigins []string, cfg *con
 		for {
 			msgType, raw, err := ws.Read(ctx)
 			if err != nil {
+				finalErr = err
 				cancel()
 				return
 			}
 			if msgType != websocket.MessageText {
-				writeWSError(ctx, ws, "INVALID_MESSAGE_TYPE", "control messages must be text JSON")
+				writeWSError(ctx, ws, cfg, "INVALID_MESSAGE_TYPE", "control messages must be text JSON")
 				continue
 			}
 			cmsg, derr := decodeControlEnvelope(raw)
@@ -136,12 +148,13 @@ func StreamControl(registry *session.Registry, allowedOrigins []string, cfg *con
 				} else if errors.Is(derr, scrcpy.ErrControlPayloadTooLarge) {
 					code = "CONTROL_PAYLOAD_TOO_LARGE"
 				}
-				writeWSError(ctx, ws, code, derr.Error())
+				writeWSError(ctx, ws, cfg, code, derr.Error())
 				continue
 			}
 			// Re-check lease at write time (race vs TTL expiry).
 			if !mgr.IsHeldBy(leaseID) {
-				writeWSError(ctx, ws, "NOT_CONTROLLER", "lease no longer held")
+				writeWSError(ctx, ws, cfg, "NOT_CONTROLLER", "lease no longer held")
+				finalErr = fmt.Errorf("lease_lost")
 				ws.Close(4001, "lease_lost")
 				return
 			}
@@ -170,11 +183,12 @@ func extractLeaseIDFromSubprotocol(r *http.Request) string {
 }
 
 // writeWSError sends a structured error envelope as a text frame without closing.
-func writeWSError(ctx context.Context, ws *websocket.Conn, code, message string) {
+// Uses a bounded write deadline so a stalled browser cannot block the read loop.
+func writeWSError(ctx context.Context, ws *websocket.Conn, cfg *config.Config, code, message string) {
 	body, _ := json.Marshal(map[string]any{
 		"error": map[string]string{"code": code, "message": message},
 	})
-	_ = ws.Write(ctx, websocket.MessageText, body)
+	_ = wsWriteWithTimeout(ctx, ws, cfg, websocket.MessageText, body)
 }
 
 // decodeControlEnvelope parses a JSON control message envelope into a scrcpy.ControlMsg.

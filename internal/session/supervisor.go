@@ -38,6 +38,15 @@ type SessionOpts struct {
 	// LogcatCapacity is the per-device logcat ring buffer size in lines
 	// (Plan 03-03). Zero means "use the LogcatBuffer default" (10000).
 	LogcatCapacity int
+
+	// Scrcpy streaming tunables (SCR-07). Zero values mean "use the scrcpy
+	// server default" — backward compatible with Phase 1/2.
+	ScrcpyCodec       string // h264 | h265 | av1; empty = server default
+	ScrcpyMaxSize     int    // px, 0 = device default
+	ScrcpyBitRate     int    // bps, 0 = server default
+	ScrcpyMaxFPS      int    // 0 = unlimited
+	ScrcpyAudioCodec  string // opus | aac | raw | flac; empty = server default
+	ScrcpyAudioSource string // output | mic | playback; empty = server default
 }
 
 // DefaultSessionOpts returns reasonable defaults for Phase 1 compatibility.
@@ -79,11 +88,29 @@ type DeviceSession struct {
 	audioHub      *Hub
 	controlWriter *scrcpy.ControlWriter
 	deviceMsgs    chan scrcpy.DeviceMessage
+	runCancel     context.CancelFunc // cancels the Run() errgroup context
+
+	// readyCh is closed by Run() (or SetControlWriterForTest) once the
+	// streaming components (videoHub, audioHub, controlWriter, deviceMsgs)
+	// are instantiated. CreateSession blocks on Ready() before returning
+	// HTTP 201 so a client connecting to /video|/audio|/control immediately
+	// after the response cannot race the Run() goroutine and observe nil hubs.
+	readyCh   chan struct{}
+	readyOnce sync.Once
 
 	// Phase 2: config snapshot.
 	bufFrames      int
 	maxConsecDrops int
 	audioEnabled   bool
+
+	// Phase 3 (SCR-07): scrcpy streaming tunables, captured at session creation.
+	// Zero values mean "use server default" — passed through to LaunchOptions.
+	scrcpyCodec       string
+	scrcpyMaxSize     int
+	scrcpyBitRate     int
+	scrcpyMaxFPS      int
+	scrcpyAudioCodec  string
+	scrcpyAudioSource string
 
 	// Phase 3 (Plan 03-02): captured LaunchOptions used at the most recent
 	// successful launch. Recovery re-uses these to re-issue scrcpy on the
@@ -124,7 +151,43 @@ func NewDeviceSession(serial string, adbClient *adb.Client, launcher Launcher, o
 		maxConsecDrops: opts.MaxConsecDrops,
 		audioEnabled:   opts.AudioEnabled,
 		logcatCapacity: opts.LogcatCapacity,
+		scrcpyCodec:       opts.ScrcpyCodec,
+		scrcpyMaxSize:     opts.ScrcpyMaxSize,
+		scrcpyBitRate:     opts.ScrcpyBitRate,
+		scrcpyMaxFPS:      opts.ScrcpyMaxFPS,
+		scrcpyAudioCodec:  opts.ScrcpyAudioCodec,
+		scrcpyAudioSource: opts.ScrcpyAudioSource,
+		readyCh:        make(chan struct{}),
 	}
+}
+
+// Ready returns a channel that is closed once Run() (or
+// SetControlWriterForTest) has instantiated the streaming components.
+// CreateSession waits on this before responding 201 to prevent a WS
+// client from racing the Run goroutine and observing a nil ControlWriter.
+//
+// Lazy-init: readyCh may be nil on sessions created via struct literal
+// (test helpers like NewActiveSessionForTest). Both Ready and markReady
+// allocate it on demand.
+func (s *DeviceSession) Ready() <-chan struct{} {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.readyCh == nil {
+		s.readyCh = make(chan struct{})
+	}
+	return s.readyCh
+}
+
+// markReady closes readyCh exactly once. Safe to call from multiple paths
+// (Run on first invocation, SetControlWriterForTest for unit tests).
+func (s *DeviceSession) markReady() {
+	s.mu.Lock()
+	if s.readyCh == nil {
+		s.readyCh = make(chan struct{})
+	}
+	ch := s.readyCh
+	s.mu.Unlock()
+	s.readyOnce.Do(func() { close(ch) })
 }
 
 // Start acquires the device mutex, validates the idle->starting transition,
@@ -144,6 +207,12 @@ func (s *DeviceSession) Start(ctx context.Context) error {
 	opts := scrcpy.LaunchOptions{
 		AudioEnabled:   s.audioEnabled,
 		ControlEnabled: true,
+		Codec:       s.scrcpyCodec,
+		MaxSize:     s.scrcpyMaxSize,
+		BitRate:     s.scrcpyBitRate,
+		MaxFPS:      s.scrcpyMaxFPS,
+		AudioCodec:  s.scrcpyAudioCodec,
+		AudioSource: s.scrcpyAudioSource,
 	}
 	s.launchOpts = opts // remember for Recovery re-launch
 	result, err := s.launcher.LaunchWithOptions(ctx, s.Serial, opts)
@@ -210,6 +279,10 @@ func (s *DeviceSession) Close(ctx context.Context) error {
 	s.mu.Unlock()
 
 	s.log.Info("session stopping")
+	// Cancel the Run() errgroup goroutines (video/audio readers, hubs, etc.)
+	if s.runCancel != nil {
+		s.runCancel()
+	}
 	s.cleanupResources()
 
 	s.mu.Lock()
@@ -334,6 +407,11 @@ func (s *DeviceSession) Run(ctx context.Context) error {
 		g.Go(func() error { return s.deviceMessageReaderLoop(ctx, controlConn) })
 	}
 
+	// All streaming components (videoHub, audioHub if available, controlWriter
+	// if controlConn != nil, deviceMsgs) are now instantiated. Unblock any
+	// caller waiting on Ready() — typically CreateSession before responding 201.
+	s.markReady()
+
 	return g.Wait()
 }
 
@@ -354,9 +432,10 @@ func (s *DeviceSession) videoReaderLoop(ctx context.Context) error {
 			return fmt.Errorf("video read: %w", err)
 		}
 		s.videoHub.Publish(&Frame{
-			Header:   hdr.RawHeader(),
-			Payload:  payload,
-			KeyFrame: hdr.KeyFrame,
+			Header:       hdr.RawHeader(),
+			Payload:      payload,
+			KeyFrame:     hdr.KeyFrame,
+			ConfigPacket: hdr.ConfigPacket,
 		})
 	}
 }
@@ -379,9 +458,10 @@ func (s *DeviceSession) audioReaderLoop(ctx context.Context, conn net.Conn) erro
 			return fmt.Errorf("audio read: %w", err)
 		}
 		s.audioHub.Publish(&Frame{
-			Header:   hdr.RawHeader(),
-			Payload:  payload,
-			KeyFrame: hdr.KeyFrame,
+			Header:       hdr.RawHeader(),
+			Payload:      payload,
+			KeyFrame:     hdr.KeyFrame,
+			ConfigPacket: hdr.ConfigPacket,
 		})
 	}
 }
@@ -418,6 +498,14 @@ func (s *DeviceSession) deviceMessageReaderLoop(ctx context.Context, conn net.Co
 }
 
 // Accessor methods for Phase 2 WS handlers (plan 02-06).
+
+// SetRunCancel stores the cancel function for the Run() errgroup context.
+// Called by CreateSession after Start succeeds; used by Close to stop Run goroutines.
+func (s *DeviceSession) SetRunCancel(cancel context.CancelFunc) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.runCancel = cancel
+}
 
 func (s *DeviceSession) VideoHub() *Hub {
 	s.mu.Lock()
@@ -475,10 +563,13 @@ func (s *DeviceSession) SetAudioHubForTest(hub *Hub) {
 }
 
 // SetControlWriterForTest sets the control writer on a test session. Only for use in tests.
+// Also marks the session ready so tests that exercise WS handlers via the real
+// CreateSession path (which waits on Ready) do not block.
 func (s *DeviceSession) SetControlWriterForTest(cw *scrcpy.ControlWriter) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.controlWriter = cw
+	s.mu.Unlock()
+	s.markReady()
 }
 
 // SetLogcatBufferForTest installs a LogcatBuffer on a test session. Only for

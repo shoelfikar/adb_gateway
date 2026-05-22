@@ -149,6 +149,10 @@ func DownloadFileForTest(registry *session.Registry, runner FileShellRunner, cfg
 // Supports ?recursive=1 for recursive tree delete (D-FB-10), gated by
 // DeviceEntry.WriteInFlight single-flight. Default (no recursive flag)
 // preserves Phase 3 single-file rm -f behavior unchanged.
+//
+// Recursive delete of a base directory (e.g. /sdcard) is explicitly blocked
+// to prevent accidental wipe of the entire user storage. The base directory
+// path must be inside an allowed base, not the base itself.
 func DeleteFileForTest(registry *session.Registry, runner FileShellRunner, cfg *config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		serial, ok := validateSerial(w, r)
@@ -169,6 +173,13 @@ func DeleteFileForTest(registry *session.Registry, runner FileShellRunner, cfg *
 		recursive := r.URL.Query().Get("recursive") == "1"
 
 		if recursive {
+			// Block recursive delete of an allowed base directory (e.g. /sdcard).
+			// This prevents accidental `rm -rf /sdcard` which would wipe all user data.
+			if IsBaseDirPath(cleaned, cfg.Files.AllowedBasePaths) {
+				writeError(w, ErrBaseDirDelete)
+				return
+			}
+
 			// Acquire WriteInFlight single-flight gate (Pitfall 9).
 			if !entry.WriteInFlight.CompareAndSwap(false, true) {
 				writeError(w, ErrDeviceBusy)
