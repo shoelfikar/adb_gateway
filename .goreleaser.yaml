@@ -43,8 +43,10 @@ archives:
         formats: [zip]
     files:
       - THIRD_PARTY_NOTICES
-      - src: config.yaml
-        dst: config.yaml.example
+      # config.yaml.example is tracked in the repo; the real config.yaml is
+      # gitignored to keep secrets out of source control, so it would not
+      # exist on a fresh CI checkout.
+      - config.yaml.example
       # Linux installer artifacts — irrelevant on darwin/windows but harmless.
       - src: scripts/install.sh
       - src: scripts/uninstall.sh
@@ -78,7 +80,7 @@ changelog:
 
 release:
   github:
-    owner: pelni
+    owner: sulfikardi
     name: adb-gateway
   draft: false
   prerelease: auto
