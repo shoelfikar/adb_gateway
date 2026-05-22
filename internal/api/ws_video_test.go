@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -245,22 +246,24 @@ func TestStreamVideoLateJoinerReceivesKeyframe(t *testing.T) {
 }
 
 func TestStreamVideoPingPongCycle(t *testing.T) {
-	// STR-08: With CloseRead now active, pings from the server are answered by
-	// the client's auto-pong (coder/websocket processes pings during Read).
-	// The connection stays alive as long as pongs arrive. We verify that after
-	// multiple ping intervals the connection is still alive by writing a frame
-	// from the server and reading it on the client.
+	// STR-08: server pings on a timer; pongs from the client keep the idle
+	// counter at zero. We verify that after >idle_timeout of wall time the
+	// connection is still alive by publishing a frame from the hub and
+	// receiving it on the client.
+	//
+	// IMPORTANT: coder/websocket only processes incoming control frames
+	// (including pings) while a Read is in flight. Sleeping the test main
+	// goroutine without reading would buffer pings server-side and *cause*
+	// the very idle-timeout we're trying to disprove. We therefore drain
+	// inbound frames on a goroutine and only block the main goroutine on a
+	// channel that signals when our published "after-pings" payload lands.
 	sess, hub, cancel := newActiveSessionWithHub(t, "ABC123")
 	defer cancel()
 
 	registry := session.NewRegistry()
 	cfg := testConfig()
-	// Loosened from 1s/3s/4s sleep to 2s/6s/8s sleep so CI runners (which can
-	// stall a goroutine for several hundred ms under contention) no longer
-	// flake. We still cross >3 ping intervals and sleep > idle_timeout, so
-	// the test still proves that auto-pong is keeping the connection alive.
-	cfg.WS.PingIntervalSeconds = 2 // ping every 2s
-	cfg.WS.IdleTimeoutSeconds = 6   // 3 consecutive misses = idle
+	cfg.WS.PingIntervalSeconds = 1 // ping every 1s
+	cfg.WS.IdleTimeoutSeconds = 3   // 3 consecutive misses = idle
 
 	entry := registry.GetOrCreate("ABC123")
 	entry.SetSession(sess)
@@ -271,37 +274,65 @@ func TestStreamVideoPingPongCycle(t *testing.T) {
 	defer server.Close()
 
 	wsURL := "ws" + strings.TrimPrefix(server.URL, "http") + "/devices/ABC123/video"
-	ctx, ctxCancel := context.WithTimeout(context.Background(), 20*time.Second)
+	ctx, ctxCancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer ctxCancel()
 
 	conn, _, err := websocket.Dial(ctx, wsURL, nil)
 	require.NoError(t, err)
 	defer conn.CloseNow()
 
-	// Read codec meta
-	readCtx, readCancel := context.WithTimeout(ctx, 2*time.Second)
-	defer readCancel()
-	_, _, err = conn.Read(readCtx)
-	require.NoError(t, err, "should receive codec meta")
+	// Drain inbound frames on a goroutine. This keeps coder/websocket's
+	// internal reader pumping (so pings -> auto-pongs flow), AND surfaces
+	// the "after-pings" frame to the main goroutine via the channel.
+	type readResult struct {
+		data []byte
+		err  error
+	}
+	got := make(chan readResult, 1)
+	readerCtx, readerCancel := context.WithCancel(ctx)
+	defer readerCancel()
+	go func() {
+		// First frame is codec meta — discard.
+		if _, _, err := conn.Read(readerCtx); err != nil {
+			got <- readResult{err: fmt.Errorf("codec meta read: %w", err)}
+			return
+		}
+		// Subsequent frames: forward the first one that contains our
+		// marker so we can correlate against the publish below.
+		for {
+			_, data, err := conn.Read(readerCtx)
+			if err != nil {
+				got <- readResult{err: err}
+				return
+			}
+			if strings.Contains(string(data), "after-pings") {
+				got <- readResult{data: data}
+				return
+			}
+		}
+	}()
 
-	// Wait through 3+ ping intervals (>idle_timeout). With CloseRead on the
-	// server side, pong responses are processed and the idle counter resets.
-	// Connection should still be alive.
-	time.Sleep(8 * time.Second)
+	// Wait > idle_timeout. If pong handling is broken the server-side ping
+	// loop will close the connection during this window and the reader
+	// goroutine will surface the close as an error.
+	time.Sleep(4 * time.Second)
 
-	// Publish a frame from the hub; if the connection is alive the client
-	// will receive it.
+	// Publish a frame from the hub; the reader goroutine will pick it up
+	// if (and only if) the connection is still alive.
 	hub.Publish(&session.Frame{
 		Header:   [12]byte{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11},
 		Payload:  []byte("after-pings"),
 		KeyFrame: false,
 	})
 
-	readCtx2, readCancel2 := context.WithTimeout(ctx, 2*time.Second)
-	defer readCancel2()
-	_, data, err := conn.Read(readCtx2)
-	require.NoError(t, err, "connection should still be alive after pings")
-	assert.Contains(t, string(data), "after-pings", "should receive frame published after ping cycles")
+	select {
+	case r := <-got:
+		require.NoError(t, r.err, "connection should still be alive after pings")
+		assert.Contains(t, string(r.data), "after-pings",
+			"should receive frame published after ping cycles")
+	case <-time.After(3 * time.Second):
+		t.Fatal("timed out waiting for post-ping frame to arrive on client")
+	}
 }
 
 func TestStreamVideoReadLimitApplied(t *testing.T) {
