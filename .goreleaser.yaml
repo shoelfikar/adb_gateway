@@ -1,0 +1,100 @@
+# GoReleaser v2 config — https://goreleaser.com
+# Trigger: push tag `v*` (see .github/workflows/release.yml).
+version: 2
+
+project_name: adb-gateway
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: adb-gateway
+    main: ./cmd/gateway
+    binary: adb-gateway
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      # Windows on arm64 not requested — keep release surface tight.
+      - goos: windows
+        goarch: arm64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X main.buildVersion={{ .Version }}
+      - -X main.buildSHA={{ .ShortCommit }}
+
+archives:
+  - id: default
+    ids: [adb-gateway]
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files:
+      - THIRD_PARTY_NOTICES
+      - src: config.yaml
+        dst: config.yaml.example
+      # Linux installer artifacts — irrelevant on darwin/windows but harmless.
+      - src: scripts/install.sh
+      - src: scripts/uninstall.sh
+      - src: scripts/adb-gateway.service
+
+checksum:
+  name_template: "checksums.txt"
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  sort: asc
+  use: git
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - "Merge pull request"
+      - "Merge branch"
+  groups:
+    - title: Features
+      regexp: '^.*?feat(\(.+\))??!?:.+$'
+      order: 0
+    - title: Bug fixes
+      regexp: '^.*?fix(\(.+\))??!?:.+$'
+      order: 1
+    - title: Others
+      order: 999
+
+release:
+  github:
+    owner: pelni
+    name: adb-gateway
+  draft: false
+  prerelease: auto
+  name_template: "{{ .ProjectName }} v{{ .Version }}"
+  header: |
+    Linux install (Ubuntu/systemd):
+    ```
+    tar xzf adb-gateway_{{ .Version }}_linux_amd64.tar.gz
+    cd adb-gateway_{{ .Version }}_linux_amd64
+    sudo ./install.sh
+    ```
+    The installer creates a system user, installs the binary to
+    `/usr/local/bin/adb-gateway`, places the systemd unit at
+    `/etc/systemd/system/adb-gateway.service`, and seeds
+    `/etc/adb-gateway/config.yaml` if absent.
+
+    **Prerequisite:** the host must have `adb` installed and reachable on
+    `localhost:5037` (this gateway talks to the local ADB server, not USB
+    directly).

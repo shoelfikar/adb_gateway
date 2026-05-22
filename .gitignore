@@ -1,5 +1,6 @@
 .planning
 gateway
+dist/
 *.exe
 *.md
 *.html

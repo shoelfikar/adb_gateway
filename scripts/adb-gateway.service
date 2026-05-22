@@ -1,0 +1,43 @@
+[Unit]
+Description=ADB Gateway — REST/WS gateway for fleet of USB-attached Android devices
+Documentation=https://github.com/pelni/adb-gateway
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=adb-gateway
+Group=adb-gateway
+
+# Binary and config installed by scripts/install.sh.
+ExecStart=/usr/local/bin/adb-gateway --config /etc/adb-gateway/config.yaml
+Restart=on-failure
+RestartSec=5s
+
+# Environment file is optional — override API keys, log level, etc. without
+# editing the config file.
+EnvironmentFile=-/etc/adb-gateway/adb-gateway.env
+
+# Hardening — the gateway only needs network egress to localhost:5037 (ADB)
+# and inbound HTTP, plus read of its config dir. It does not need write
+# access anywhere on disk except /tmp for recordings (override if recordings
+# go elsewhere via config).
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictRealtime=true
+
+# Allow read of config dir and write to a state dir for recordings/logs.
+ReadOnlyPaths=/etc/adb-gateway
+ReadWritePaths=/var/lib/adb-gateway
+
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target
