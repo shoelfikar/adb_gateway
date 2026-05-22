@@ -105,34 +105,65 @@ Redis is planned in a future phase).
 
 ## Install
 
-### Production: pre-built release (Ubuntu / Debian, systemd)
+### Quick install — one-liner (Ubuntu / Debian, systemd)
 
-Every tagged release publishes archives for `linux/amd64`, `linux/arm64`,
-`darwin/amd64`, `darwin/arm64`, and `windows/amd64`. The Linux/macOS
-archives bundle the binary, a systemd unit, and an installer script.
+Easiest path. The bootstrap script auto-detects your architecture, resolves
+the latest release, verifies SHA-256, and hands off to the bundled
+`install.sh` for the systemd wiring.
 
 ```bash
-# 1. Install adb on the host (the gateway talks to a local ADB server).
-sudo apt update && sudo apt install -y adb
+# 1. Prerequisite: adb must be installed on the host (gateway talks to a
+#    local adb server on localhost:5037, it does not touch USB directly).
+sudo apt update && sudo apt install -y android-tools-adb
 adb start-server
 
-# 2. Download and extract the latest release for your arch.
-VERSION=v0.1.0
-ARCH=linux_amd64        # or linux_arm64
-curl -LO https://github.com/<owner>/adb-gateway/releases/download/$VERSION/adb-gateway_${VERSION}_${ARCH}.tar.gz
-tar xzf adb-gateway_${VERSION}_${ARCH}.tar.gz
-cd adb-gateway_${VERSION}_${ARCH}
+# 2. Install adb-gateway.
+curl -fsSL https://raw.githubusercontent.com/shoelfikar/adb_gateway/main/scripts/adb-gateway.sh | sudo bash
 
-# 3. Install and enable the service.
-sudo ./install.sh
-
-# 4. Set your API key, then restart.
+# 3. Set your API key (generated with `openssl rand -hex 32`), then restart.
 sudo "$EDITOR" /etc/adb-gateway/config.yaml          # set api_key_primary
 sudo systemctl restart adb-gateway
 
-# 5. Watch it run.
+# 4. Verify.
 systemctl status adb-gateway
 journalctl -u adb-gateway -f
+curl http://127.0.0.1:8000/healthz
+```
+
+Pin a specific version (skip the "latest release" lookup):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/shoelfikar/adb_gateway/main/scripts/adb-gateway.sh \
+  | sudo VERSION=v0.1.0 bash
+```
+
+Supported targets: `linux/amd64`, `linux/arm64`. (Darwin and Windows archives
+are still produced for cross-platform dev — use the manual install for those.)
+
+### Manual install — pre-built tarball
+
+If you prefer to inspect or air-gap, download the archive yourself.
+
+```bash
+sudo apt install -y android-tools-adb && adb start-server
+
+VERSION=v0.1.0
+ARCH=linux_amd64        # or linux_arm64
+BASE=https://github.com/shoelfikar/adb_gateway/releases/download/$VERSION
+
+# Download + verify
+curl -LO $BASE/adb-gateway_${VERSION}_${ARCH}.tar.gz
+curl -LO $BASE/checksums.txt
+sha256sum --check --ignore-missing checksums.txt
+
+# Extract + install
+tar xzf adb-gateway_${VERSION}_${ARCH}.tar.gz
+cd adb-gateway_${VERSION}_${ARCH}
+sudo ./install.sh
+
+# Configure + start
+sudo "$EDITOR" /etc/adb-gateway/config.yaml
+sudo systemctl restart adb-gateway
 ```
 
 `install.sh` is idempotent. It will:
@@ -146,11 +177,22 @@ journalctl -u adb-gateway -f
 - Prepare `/var/lib/adb-gateway` for runtime state (recordings, etc.).
 - `daemon-reload`, enable, and start/restart the service.
 
-To uninstall:
+### Upgrade
+
+Just re-run the one-liner. `install.sh` preserves your existing
+`/etc/adb-gateway/config.yaml`; the new template lands next to it as
+`config.yaml.example` so you can diff for new keys.
 
 ```bash
-sudo ./uninstall.sh           # keeps /etc/adb-gateway and the user
-sudo ./uninstall.sh --purge   # also removes config, state, user, and group
+curl -fsSL https://raw.githubusercontent.com/shoelfikar/adb_gateway/main/scripts/adb-gateway.sh | sudo bash
+```
+
+### Uninstall
+
+```bash
+cd adb-gateway_${VERSION}_${ARCH}     # or wherever install.sh was run
+sudo ./uninstall.sh                   # keeps /etc/adb-gateway and the user
+sudo ./uninstall.sh --purge           # also removes config, state, user, and group
 ```
 
 ### From source
@@ -158,8 +200,8 @@ sudo ./uninstall.sh --purge   # also removes config, state, user, and group
 Requires Go 1.24+ (the project is currently on Go 1.25).
 
 ```bash
-git clone https://github.com/<owner>/adb-gateway.git
-cd adb-gateway
+git clone https://github.com/shoelfikar/adb_gateway.git
+cd adb_gateway
 go build -o adb-gateway ./cmd/gateway
 ./adb-gateway --version
 

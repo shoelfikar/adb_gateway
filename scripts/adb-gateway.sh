@@ -2,10 +2,10 @@
 # One-liner installer for adb-gateway.
 #
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/shoelfikar/adb_gateway/main/scripts/get.sh | sudo bash
+#   curl -fsSL https://raw.githubusercontent.com/shoelfikar/adb_gateway/main/scripts/adb-gateway.sh | sudo bash
 #
 # Pin a specific version:
-#   curl -fsSL https://raw.githubusercontent.com/shoelfikar/adb_gateway/main/scripts/get.sh \
+#   curl -fsSL https://raw.githubusercontent.com/shoelfikar/adb_gateway/main/scripts/adb-gateway.sh \
 #     | sudo VERSION=v0.1.0 bash
 #
 # What it does:
@@ -22,9 +22,9 @@ REPO="${ADB_GW_REPO:-adb_gateway}"
 VERSION="${VERSION:-}"
 TMPDIR_PATH=""
 
-log()   { printf "\033[1;36m[get.sh]\033[0m %s\n" "$*"; }
-warn()  { printf "\033[1;33m[get.sh]\033[0m %s\n" "$*" >&2; }
-die()   { printf "\033[1;31m[get.sh]\033[0m %s\n" "$*" >&2; exit 1; }
+log()   { printf "\033[1;36m[adb-gateway]\033[0m %s\n" "$*"; }
+warn()  { printf "\033[1;33m[adb-gateway]\033[0m %s\n" "$*" >&2; }
+die()   { printf "\033[1;31m[adb-gateway]\033[0m %s\n" "$*" >&2; exit 1; }
 
 cleanup() {
     if [ -n "$TMPDIR_PATH" ] && [ -d "$TMPDIR_PATH" ]; then
@@ -134,7 +134,7 @@ main() {
 
     cat <<EOF
 
-[get.sh] adb-gateway $VERSION installed.
+[adb-gateway] adb-gateway $VERSION installed.
          Next: edit /etc/adb-gateway/config.yaml (set api_key_primary)
                then: sudo systemctl restart adb-gateway
          Logs: journalctl -u adb-gateway -f

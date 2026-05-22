@@ -174,4 +174,4 @@ versioned sections above.
 
 ---
 
-[Unreleased]: https://github.com/<owner>/adb-gateway/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/shoelfikar/adb_gateway/compare/v0.1.0...HEAD
