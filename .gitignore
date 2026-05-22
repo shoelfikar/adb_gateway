@@ -70,3 +70,5 @@ public/mockServiceWorker.js
 .vscode
 .claude
 *.md
+!README.md
+!CHANGELOG.md
